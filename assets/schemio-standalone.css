@@ -1,0 +1,142 @@
+html, body, .ssc-container, #svg-editor, .ssc-body {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+.ssc-container {
+    font-family: 'San Francisco', Roboto, 'Segoe UI', 'Helvetica Neue',sans-serif;
+    display: flex;
+    flex-direction: column;
+}
+.ssc-container .ssc-header {
+    background: #555;
+    color: #f0f0f0;
+    border-bottom: 1px solid #cccccc;
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    font-size: 14px;
+}
+.ssc-container .ssc-header a {
+    color: #b0d8f5;
+}
+.ssc-container .ssc-header > div {
+    padding: 5px;
+}
+
+.ssc-container .ssc-header .ssc-header-search {
+    flex: 1;
+}
+
+.ssc-container .ssc-header .ssc-search {
+    display: inline-block;
+    padding: 2px 4px;
+    border: 1px solid #555;
+    width: 60px;
+    background: #777;
+    color: #f0f0f0;
+    border-radius: 3px;
+}
+
+.ssc-container .ssc-header .ssc-schemio-logo {
+    position: absolute;
+    display: flex;
+    right: 5px;
+    top: 6px;
+}
+.ssc-container .ssc-header .ssc-schemio-logo span {
+    align-self: center;
+}
+
+.ssc-button {
+    display: inline-block;
+    padding: 2px 5px 2px 5px;
+    font-size: 14px;
+    cursor: pointer;
+    background: #f0f0f0;
+    border: 1px solid #777;
+    color: #222;
+    border-radius: 3px;
+}
+.ssc-button:hover {
+    background: #80aed7;
+    color: #fff;
+    border: 1px solid #2b90b5;
+}
+
+.ssc-container svg {
+    width: 100%;
+    height: 100%;
+}
+
+
+.ssc-container svg foreignObject .item-text-container p:first-child {
+    margin-top: 0;
+}
+.ssc-container svg foreignObject .item-text-container p {
+    min-height: 18px;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0;
+}
+
+/******************** Item Tooltip ***************/
+.item-tooltip {
+    position: absolute;
+    box-shadow: rgba(0, 0, 0, 0.5) 2px 2px 10px;
+    overflow: auto;
+}
+.item-tooltip h3 {
+    margin-top: 0;
+}
+
+.item-tooltip .item-tooltip-close {
+    position: absolute;
+    font-size: 20px;
+    top: 0px;
+    right: 8px;
+    opacity: 0.4;
+    cursor: pointer;
+}
+.item-tooltip .item-tooltip-close:hover {
+    opacity: 1.0;
+}
+
+.item-tooltip h2 {
+    margin-top: 0px;
+    margin-bottom: 10px;
+}
+
+.ssc-side-panel-right {
+    position: absolute;
+    text-align: left;
+    background: #f0f0f0;
+    height: 100%;
+    top: 0;
+    right: 0;
+    padding: 0;
+    margin: 0;
+    overflow: scroll;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+.ssc-side-panel-right .ssc-side-panel-content {
+    padding: 10px;
+}
+
+.missing-shape rect {
+    stroke-width: 2px;
+    stroke: #db3a3a;
+    fill: rgba(227, 120, 120, 0.3);
+}
+.missing-shape div {
+    color: #db3a3a;
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 0px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: normal;
+    display: table-cell;
+    box-sizing: border-box;
+}
