@@ -8,7 +8,7 @@ curl -s -X POST "$url/v1/static-export/start"
 
 echo ""
 echo "Waiting for static exporter to finish..."
-attemptsLeft=11
+attemptsLeft=60
 
 until curl -s "$url/v1/static-export/status" | grep '"finished"'
 do
