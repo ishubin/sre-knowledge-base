@@ -32341,6 +32341,19 @@ var render = function () {
   var _c = _vm._self._c || _h
   return _c(
     "g",
+    {
+      on: {
+        click: function ($event) {
+          return _vm.$emit("custom-event", "clicked")
+        },
+        mouseover: function ($event) {
+          return _vm.$emit("custom-event", "mousein")
+        },
+        mouseleave: function ($event) {
+          return _vm.$emit("custom-event", "mouseout")
+        },
+      },
+    },
     [
       _c("advanced-fill", {
         attrs: {
@@ -32637,6 +32650,9 @@ var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
 //
 //
 //
+//
+//
+//
 
 
 
@@ -32681,7 +32697,7 @@ const COMPONENT_FAILED = 'Component Failed';
       name: 'Component',
       iconUrl: '/assets/images/items/component.svg',
       description: `
-                Lets you embed other schemes into this item. 
+                Lets you embed other schemes into this item.
             `,
       item: {
         textSlots: {
@@ -32742,17 +32758,19 @@ const COMPONENT_FAILED = 'Component Failed';
       schemeId: {
         type: 'scheme-ref',
         value: '',
-        name: 'Scheme ID',
+        name: 'Doc ID',
         depends: {
           kind: 'external'
-        }
+        },
+        description: 'ID of the document that this component should load'
       },
       referenceItem: {
         type: 'element',
         name: 'Item',
         depends: {
           kind: 'embedded'
-        }
+        },
+        description: 'Reference item that this component should render'
       },
       placement: {
         type: 'choice',
@@ -53018,7 +53036,7 @@ var ItemDetailsvue_type_template_id_d1e030b8_lang_html_render = function () {
           _c(
             "ul",
             { staticClass: "links" },
-            _vm._l(_vm.item.links, function (link, linkId) {
+            _vm._l(_vm.item.links, function (link) {
               return _c("li", [
                 _c(
                   "a",
@@ -53030,7 +53048,7 @@ var ItemDetailsvue_type_template_id_d1e030b8_lang_html_render = function () {
                     _c("i", { class: _vm.getLinkCssClass(link) }),
                     _vm._v(
                       "\n                    " +
-                        _vm._s(link.title) +
+                        _vm._s(_vm._f("formatLinkTitle")(link)) +
                         "\n                "
                     ),
                   ]
@@ -53087,6 +53105,16 @@ ItemDetailsvue_type_template_id_d1e030b8_lang_html_render._withStripped = true
   computed: {
     sanitizedItemDescription() {
       return htmlSanitize_default()(this.item.description);
+    }
+
+  },
+  filters: {
+    formatLinkTitle(link) {
+      if (link.title) {
+        return link.title;
+      } else {
+        return link.url;
+      }
     }
 
   }
