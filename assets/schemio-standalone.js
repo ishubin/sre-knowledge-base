@@ -10014,6 +10014,8 @@ var shortid = __webpack_require__(4670);
 var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/Shape.js
 var Shape = __webpack_require__(3363);
+// EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/Component.vue + 4 modules
+var Component = __webpack_require__(332);
 // EXTERNAL MODULE: ./src/ui/scheme/Item.js
 var Item = __webpack_require__(7196);
 // EXTERNAL MODULE: ./src/ui/scheme/ItemFixer.js
@@ -10590,6 +10592,7 @@ function _defineProperty(obj, key, value) { if (key in obj) { Object.definePrope
 
 
 
+
 const log = new logger/* Logger */.Yd('SchemeContainer'); // for now putting it here until I figure out a more elegant way of indexing item outline points
 // There is a problem when the items are scaled too litle and when user zooms in to that downscaled item
 // In that case it would not be able to find points in the quad tree as the generated points are too sparse
@@ -10641,7 +10644,7 @@ function worldVectorOnItem(x, y, item) {
  * In case item has no parents - it returns the world coords
  * @param {*} x world position x
  * @param {*} y world position y
- * @param {*} item 
+ * @param {*} item
  */
 
 function relativePointForItem(x, y, item) {
@@ -10661,7 +10664,7 @@ function relativePointForItem(x, y, item) {
 /**
  * Calculates scaling effect of the item relative to the world
  * This is needed for proper computation of control points for scaled items
- * @param {Item} item 
+ * @param {Item} item
  * @returns {Point}
  */
 
@@ -10727,16 +10730,16 @@ function visitItems(items, callback, transformMatrix, parentItem, ancestorIds, i
 
 class ItemCache {
   /**
-   * 
-   * @param {Function} cacheMissFallback 
+   *
+   * @param {Function} cacheMissFallback
    */
   constructor(cacheMissFallback) {
     this.itemPaths = new Map();
     this.cacheMissFallback = cacheMissFallback;
   }
   /**
-   * 
-   * @param {Item} item 
+   *
+   * @param {Item} item
    */
 
 
@@ -10767,9 +10770,9 @@ Providing access to scheme elements and provides modifiers for it
 
 class SchemeContainer {
   /**
-   * 
-   * @param {Scheme} scheme 
-   * @param {EventBus} eventBus 
+   *
+   * @param {Scheme} scheme
+   * @param {EventBus} eventBus
    */
   constructor(scheme, eventBus) {
     logger/* Debugger.register */.qc.register('SchemioContainer', this);
@@ -10856,7 +10859,7 @@ class SchemeContainer {
   /**
    * Recalculates transform for each child item of specified item.
    * It is needed when user drags an item that has sub-items.
-   * @param {Item} mainItem 
+   * @param {Item} mainItem
    */
 
 
@@ -10959,7 +10962,7 @@ class SchemeContainer {
 
     const visitComponent = componentItem => {
       if (visitedIds.has(componentItem.id)) {
-        // this is dirty code. We waste time on enriching components and only later check their dependecies 
+        // this is dirty code. We waste time on enriching components and only later check their dependecies
         // and clean up in case a cyclic dependency is detected
         componentItem._childItems = [];
         componentItem.meta.cyclicComponent = true;
@@ -11039,6 +11042,16 @@ class SchemeContainer {
     };
     rectItem.shapeProps.strokeSize = 0;
     rectItem._childItems = childItems;
+
+    if (componentItem.shapeProps.kind === 'external') {
+      const maxZoomBack = this.screenTransform.scale * 100;
+      const backButton = (0,Component/* generateComponentGoBackButton */.Si)(componentItem, rectItem.area, maxZoomBack);
+
+      if (backButton) {
+        rectItem._childItems.push(backButton);
+      }
+    }
+
     componentItem._childItems = [rectItem];
     const itemTransform = myMath/* default.standardTransformWithArea */.Z.standardTransformWithArea(componentItem.meta.transformMatrix, componentItem.area);
     const nonIndexable = false;
@@ -11137,7 +11150,7 @@ class SchemeContainer {
 
       if (item.shape === 'frame_player') {
         this.framePlayers.push(item);
-      } // only storing top-level items 
+      } // only storing top-level items
 
 
       if (!parentItem) {
@@ -11505,10 +11518,10 @@ class SchemeContainer {
    * This function should only be called after indexing of items is finished
    * because it relies on item having its transformationAreas assigned in its 'meta' object
    * It converts the point inside the item from its local coords to world coords
-   * 
+   *
    * @param {Number} x local position x
    * @param {Number} y local position y
-   * @param {Item} item 
+   * @param {Item} item
    * @returns {Point}
    */
 
@@ -11520,7 +11533,7 @@ class SchemeContainer {
    * Converts world point to local item coords
    * @param {Number} x world position x
    * @param {Number} y world position y
-   * @param {Item} item 
+   * @param {Item} item
    * @returns {Point}
    */
 
@@ -11533,7 +11546,7 @@ class SchemeContainer {
    * In case item has no parents - it returns the world coords
    * @param {*} x world position x
    * @param {*} y world position y
-   * @param {*} item 
+   * @param {*} item
    */
 
 
@@ -11715,8 +11728,8 @@ class SchemeContainer {
    * This function recursively goes into all items descendants and readjusts them
    * It is needed in situation when a parent item is dragged but its children have curve items attached to them.
    * In order to keep curve readjust their shapes we need to do it with this function
-   * @param {*} itemId 
-   * @param {Boolean} isSoft 
+   * @param {*} itemId
+   * @param {Boolean} isSoft
    * @param {ItemModificationContext} context
    * @param {Number} precision - number of digits after point which it should round to
    */
@@ -11726,10 +11739,10 @@ class SchemeContainer {
     this._readjustItemAndDescendants(itemId, {}, isSoft, context, precision);
   }
   /**
-   * 
-   * @param {*} itemId 
-   * @param {Object} visitedItems 
-   * @param {Boolean} isSoft 
+   *
+   * @param {*} itemId
+   * @param {Object} visitedItems
+   * @param {Boolean} isSoft
    * @param {ItemModificationContext} context
    * @param {Number} precision - number of digits after point which it should round to
    */
@@ -11765,8 +11778,8 @@ class SchemeContainer {
     this._readjustItem(changedItemId, {}, isSoft, context, precision);
   }
   /**
-   * 
-   * @param {*} changedItem 
+   *
+   * @param {*} changedItem
    * @param {*} visitedItems - tracks all items that were already visited. Need in order to exclude eternal loops
    * @param {Boolean} isSoft specifies whether this is just a preview readjustment (e.g. curve items need to readjust their area, but only when user stopped dragging)
    * @param {ItemModificationContext} context
@@ -11997,8 +12010,8 @@ class SchemeContainer {
     this.remountItemInsideOtherItem(itemId, parentId, index + indexOffset);
   }
   /**
-   * 
-   * @param {Item} item 
+   *
+   * @param {Item} item
    * @returns {SVGPathElement}
    */
 
@@ -12007,9 +12020,9 @@ class SchemeContainer {
     return this.svgOutlinePathCache.get(item);
   }
   /**
-   * 
-   * @param {*} item 
-   * @param {Point} globalPoint 
+   *
+   * @param {*} item
+   * @param {Point} globalPoint
    * @param {Object} settings specifies whether it should calculate the normal vector on the point on specified path
    * @param {ItemClosestPoint}
    */
@@ -12047,8 +12060,8 @@ class SchemeContainer {
   }
   /**
    * calculates normal of specified point on svg path
-   * @param {*} item 
-   * @param {Number} distanceOnPath 
+   * @param {*} item
+   * @param {Number} distanceOnPath
    * @param {SVGPathElement} shadowSvgPath if not specified it will try to obtain svg path from items cache
    * @returns {Point}
    */
@@ -12241,7 +12254,7 @@ class SchemeContainer {
   }
   /**
    * Selects a specified item and deselects any other items that were selected previously
-   * @param {SchemeItem} item 
+   * @param {SchemeItem} item
    * @param {boolean} inclusive Flag that specifies whether it should deselect other items
    */
 
@@ -12345,7 +12358,7 @@ class SchemeContainer {
   }
   /**
    * This is a recursive functions that goes through all sub-items
-   * @param {Array} itemArray 
+   * @param {Array} itemArray
    */
 
 
@@ -12376,7 +12389,7 @@ class SchemeContainer {
   }
   /**
    * This is a recursive functions that goes through all sub-items
-   * @param {Array} itemArray 
+   * @param {Array} itemArray
    */
 
 
@@ -12439,7 +12452,7 @@ class SchemeContainer {
   /**
    * Finds items that match specified selector
    * @param {String} selector contains a selector for an element
-   * @param {SchemeItem} selfItem 
+   * @param {SchemeItem} selfItem
    */
 
 
@@ -12507,9 +12520,9 @@ class SchemeContainer {
     return json;
   }
   /**
-   * this is needed so that any changes applied to reference item gets immidiately reflected on all embedded component cloned items 
-   * @param {*} item 
-   * @param {*} setter 
+   * this is needed so that any changes applied to reference item gets immidiately reflected on all embedded component cloned items
+   * @param {*} item
+   * @param {*} setter
    */
 
 
@@ -12634,10 +12647,10 @@ class SchemeContainer {
     return copiedItems;
   }
   /**
-   * 
+   *
    * @param {*} items array of items that should be copied and pasted
    * @param {*} centerX x in relative transform for which items should put pasted to
-   * @param {*} centerY y in relative transform for which items should put pasted to 
+   * @param {*} centerY y in relative transform for which items should put pasted to
    */
 
 
@@ -12715,9 +12728,9 @@ class SchemeContainer {
    * This function is used to update the area of all items inside edit box so that
    * they reflect transformations applied to edit box.
    * The way it works is by computing original projection points of items onto new area of edit box
-   * @param {MultiItemEditBox} multiItemEditBox 
-   * @param {Boolean} isSoft 
-   * @param {ItemModificationContext} context 
+   * @param {MultiItemEditBox} multiItemEditBox
+   * @param {Boolean} isSoft
+   * @param {ItemModificationContext} context
    */
 
 
@@ -12802,7 +12815,7 @@ class SchemeContainer {
   }
   /**
    * Searches for all item names and adds numeric index so that it becomes unique in the scheme
-   * @param {string} name 
+   * @param {string} name
    */
 
 
@@ -12914,8 +12927,8 @@ class SchemeContainer {
     };
   }
   /**
-   * 
-   * @param {Array} items 
+   *
+   * @param {Array} items
    * @returns {MultiItemEditBox}
    */
 
@@ -13290,7 +13303,7 @@ class SchemeContainer {
     };
   }
   /**
-   * @param {Array} items 
+   * @param {Array} items
    * @returns {Map}
    */
 
@@ -16288,10 +16301,14 @@ function popPreviousVisibilites() {
   }
 
 });
+// EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/Component.vue + 4 modules
+var Component = __webpack_require__(332);
 ;// CONCATENATED MODULE: ./src/ui/userevents/functions/DestroyComponentFunction.js
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
 /* harmony default export */ const DestroyComponentFunction = ({
   name: 'Destroy component',
   description: 'Removes all the loaded items of the component. Applicable to "component" shapes only',
@@ -16299,8 +16316,16 @@ function popPreviousVisibilites() {
   supportedShapes: ['component'],
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
-    item._childItems = {};
-    schemeContainer.reindexItems();
+    try {
+      item._childItems = {};
+      schemeContainer.reindexItems();
+      userEventBus.emitItemEvent(item.id, Component/* COMPONENT_DESTROYED */.YL);
+      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+    } catch (err) {
+      console.error(err);
+    }
+
+    resultCallback();
   }
 
 });
@@ -32329,9 +32354,11 @@ component.options.__file = "src/ui/components/editor/items/shapes/CodeBlock.vue"
 
 // EXPORTS
 __webpack_require__.d(__webpack_exports__, {
+  "YL": () => (/* reexport */ COMPONENT_DESTROYED),
   "LM": () => (/* reexport */ COMPONENT_FAILED),
   "lK": () => (/* reexport */ COMPONENT_LOADED_EVENT),
-  "ZP": () => (/* binding */ Component)
+  "ZP": () => (/* binding */ Component),
+  "Si": () => (/* reexport */ generateComponentGoBackButton)
 });
 
 ;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Component.vue?vue&type=template&id=51c5472c&
@@ -32400,6 +32427,7 @@ var render = function () {
                     fill: _vm.svgButtonHoverFill,
                     x: _vm.buttonArea.x,
                     y: _vm.buttonArea.y,
+                    rx: _vm.item.shapeProps.buttonCornerRadius,
                     width: _vm.buttonArea.w,
                     height: _vm.buttonArea.h,
                     "stroke-width": _vm.item.shapeProps.buttonStrokeSize + "px",
@@ -32411,6 +32439,7 @@ var render = function () {
                     fill: _vm.svgButtonFill,
                     x: _vm.buttonArea.x,
                     y: _vm.buttonArea.y,
+                    rx: _vm.item.shapeProps.buttonCornerRadius,
                     width: _vm.buttonArea.w,
                     height: _vm.buttonArea.h,
                     "stroke-width": _vm.item.shapeProps.buttonStrokeSize + "px",
@@ -32418,30 +32447,48 @@ var render = function () {
                   },
                 }),
             _vm._v(" "),
-            !_vm.hideTextSlot
-              ? _c("g", [
-                  _c(
-                    "foreignObject",
-                    {
-                      attrs: {
-                        x: _vm.buttonArea.x,
-                        y: _vm.buttonArea.y,
-                        width: _vm.buttonArea.w,
-                        height: _vm.buttonArea.h,
-                      },
+            _vm.hideTextSlot !== "body"
+              ? _c(
+                  "foreignObject",
+                  {
+                    attrs: {
+                      x: 0,
+                      y: 0,
+                      width: _vm.item.area.w,
+                      height: _vm.bodyTextSlotHeight,
                     },
-                    [
-                      _c("div", {
-                        staticClass: "item-text-container",
-                        style: _vm.textStyle,
-                        attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
-                        domProps: {
-                          innerHTML: _vm._s(_vm.sanitizedButtonText),
-                        },
-                      }),
-                    ]
-                  ),
-                ])
+                  },
+                  [
+                    _c("div", {
+                      staticClass: "item-text-container",
+                      style: _vm.bodyTextStyle,
+                      attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+                      domProps: { innerHTML: _vm._s(_vm.sanitizedBodyText) },
+                    }),
+                  ]
+                )
+              : _vm._e(),
+            _vm._v(" "),
+            _vm.hideTextSlot !== "button"
+              ? _c(
+                  "foreignObject",
+                  {
+                    attrs: {
+                      x: _vm.buttonArea.x,
+                      y: _vm.buttonArea.y,
+                      width: _vm.buttonArea.w,
+                      height: _vm.buttonArea.h,
+                    },
+                  },
+                  [
+                    _c("div", {
+                      staticClass: "item-text-container",
+                      style: _vm.textStyle,
+                      attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+                      domProps: { innerHTML: _vm._s(_vm.sanitizedButtonText) },
+                    }),
+                  ]
+                )
               : _vm._e(),
             _vm._v(" "),
             _c("rect", {
@@ -32450,6 +32497,7 @@ var render = function () {
                 fill: "rgba(255,255,255,0)",
                 x: _vm.buttonArea.x,
                 y: _vm.buttonArea.y,
+                rx: _vm.item.shapeProps.buttonCornerRadius,
                 width: _vm.buttonArea.w,
                 height: _vm.buttonArea.h,
               },
@@ -32581,6 +32629,11 @@ var ItemText = __webpack_require__(5635);
 // EXTERNAL MODULE: ./src/htmlSanitize.js
 var htmlSanitize = __webpack_require__(3762);
 var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
+// EXTERNAL MODULE: ./src/ui/myMath.js
+var myMath = __webpack_require__(3590);
+// EXTERNAL MODULE: ./node_modules/shortid/index.js
+var shortid = __webpack_require__(4670);
+var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Component.vue?vue&type=script&lang=js&
 //
 //
@@ -32653,6 +32706,12 @@ var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
 //
 //
 //
+//
+//
+//
+//
+
+
 
 
 
@@ -32663,7 +32722,8 @@ var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
 const computePath = item => {
   const W = item.area.w;
   const H = item.area.h;
-  return `M ${W} ${H}  L 0 ${H}   L 0 ${0}   L ${W} 0  L ${W} ${H} Z`;
+  const R = Math.min(item.shapeProps.cornerRadius, item.area.w / 2, item.area.h / 2);
+  return `M ${W - R} ${H}  L ${R} ${H} a ${R} ${R} 0 0 1 ${-R} ${-R}  L 0 ${R}  a ${R} ${R} 0 0 1 ${R} ${-R}   L ${W - R} 0   a ${R} ${R} 0 0 1 ${R} ${R}  L ${W} ${H - R}   a ${R} ${R} 0 0 1 ${-R} ${R} Z`;
 };
 
 function calculateButtonArea(item, maxWidth, maxHeight) {
@@ -32673,7 +32733,7 @@ function calculateButtonArea(item, maxWidth, maxHeight) {
   const w = Math.min(maxWidth, itemMaxWidth);
   const h = Math.min(maxHeight, itemMaxHeight);
   const x = (item.area.w - w) / 2;
-  const y = (item.area.h - h) / 2;
+  const y = Math.max(minPadding, item.area.h - h - 10);
   return {
     x,
     y,
@@ -32684,6 +32744,104 @@ function calculateButtonArea(item, maxWidth, maxHeight) {
 
 const COMPONENT_LOADED_EVENT = 'Component Loaded';
 const COMPONENT_FAILED = 'Component Failed';
+const COMPONENT_DESTROYED = 'Component Destroyed';
+function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack) {
+  if (!maxZoomBack) {
+    maxZoomBack = 100;
+  }
+
+  if (!componentItem.shapeProps.showBackButton || componentItem.shapeProps.kind !== 'external') {
+    return null;
+  }
+
+  const btnWidth = 95;
+  const btnHeight = 30;
+  return {
+    id: componentItem.id + '-go-back-btn',
+    shape: 'rect',
+    area: {
+      x: containerArea.w - btnWidth - componentItem.shapeProps.backButtonHPad,
+      y: componentItem.shapeProps.backButtonVPad,
+      w: btnWidth,
+      h: btnHeight,
+      sx: 1,
+      sy: 1,
+      r: 0,
+      px: 0.5,
+      py: 0.5
+    },
+    textSlots: {
+      body: {
+        text: '<b>go back</b>',
+        color: componentItem.shapeProps.backButtonTextColor
+      }
+    },
+    opacity: 70,
+    visibile: true,
+    cursor: 'pointer',
+    shapeProps: {
+      cornerRadius: 15,
+      strokeSize: 0,
+      fill: componentItem.shapeProps.backButtonFill
+    },
+    behavior: {
+      events: [{
+        id: shortid_default().generate(),
+        event: 'clicked',
+        actions: [{
+          id: shortid_default().generate(),
+          element: '#' + componentItem.id,
+          method: 'destroyComponent',
+          args: {}
+        }, {
+          id: shortid_default().generate(),
+          element: '#' + componentItem.id,
+          method: 'zoomToIt',
+          args: {
+            closeEnough: false,
+            animated: true,
+            animationDuration: 0.5,
+            minZoom: 0,
+            maxZoom: maxZoomBack,
+            inBackground: false
+          }
+        }]
+      }, {
+        id: shortid_default().generate(),
+        event: 'mousein',
+        actions: [{
+          id: shortid_default().generate(),
+          element: 'self',
+          method: 'set',
+          args: {
+            field: 'selfOpacity',
+            value: 100,
+            animated: true,
+            animationDuration: 0.2,
+            transition: 'ease-in-out',
+            inBackground: false
+          }
+        }]
+      }, {
+        id: shortid_default().generate(),
+        event: 'mouseout',
+        actions: [{
+          id: shortid_default().generate(),
+          element: 'self',
+          method: 'set',
+          args: {
+            field: 'selfOpacity',
+            value: 70,
+            animated: true,
+            animationDuration: 0.2,
+            transition: 'ease-in-out',
+            inBackground: false
+          }
+        }]
+      }]
+    }
+  };
+}
 /* harmony default export */ const Componentvue_type_script_lang_js_ = ({
   props: ['item'],
   components: {
@@ -32701,6 +32859,15 @@ const COMPONENT_FAILED = 'Component Failed';
             `,
       item: {
         textSlots: {
+          body: {
+            text: 'Component',
+            valign: 'middle',
+            halign: 'center',
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+            paddingBottom: 0
+          },
           button: {
             text: 'Load more',
             paddingLeft: 0,
@@ -32717,13 +32884,66 @@ const COMPONENT_FAILED = 'Component Failed';
     },
 
     getTextSlots(item) {
-      return [{
-        name: 'button',
-        area: calculateButtonArea(item, 180, 40)
+      const btnArea = calculateButtonArea(item, item.shapeProps.buttonWidth, item.shapeProps.buttonHeight);
+      let h = item.area.h;
+      let hasButton = false;
+
+      if (item.shapeProps.kind === 'external' && item.shapeProps.showButton) {
+        h = btnArea.h;
+        hasButton = true;
+      }
+
+      const textSlots = [{
+        name: 'body',
+        area: {
+          x: 0,
+          y: 0,
+          w: item.area.w,
+          h
+        }
       }];
+
+      if (hasButton) {
+        textSlots.push({
+          name: 'button',
+          area: btnArea
+        });
+      }
+
+      return textSlots;
     },
 
     computePath,
+    controlPoints: {
+      make(item) {
+        const points = {
+          cornerRadius: {
+            x: Math.min(item.area.w, Math.max(item.area.w - item.shapeProps.cornerRadius, item.area.w / 2)),
+            y: 0
+          }
+        };
+
+        if (item.shapeProps.kind === 'external' && item.shapeProps.showButton) {
+          const btnArea = calculateButtonArea(item, item.shapeProps.buttonWidth, item.shapeProps.buttonHeight);
+          points['buttonCornerRadius'] = {
+            x: btnArea.x + btnArea.w - Math.min(item.shapeProps.buttonCornerRadius, btnArea.w / 2, btnArea.h / 2),
+            y: btnArea.y
+          };
+        }
+
+        return points;
+      },
+
+      handleDrag(item, controlPointName, originalX, originalY, dx, dy) {
+        if (controlPointName === 'cornerRadius') {
+          item.shapeProps.cornerRadius = Math.max(0, myMath/* default.roundPrecise */.Z.roundPrecise(item.area.w - Math.max(item.area.w / 2, originalX + dx), 1));
+        } else if (controlPointName === 'buttonCornerRadius') {
+          const btnArea = calculateButtonArea(item, item.shapeProps.buttonWidth, item.shapeProps.buttonHeight);
+          item.shapeProps.buttonCornerRadius = Math.min(btnArea.h / 2, btnArea.w / 2, Math.max(0, myMath/* default.roundPrecise */.Z.roundPrecise(btnArea.x + btnArea.w - originalX - dx)));
+        }
+      }
+
+    },
     args: {
       fill: {
         type: 'advanced-color',
@@ -32771,6 +32991,12 @@ const COMPONENT_FAILED = 'Component Failed';
           kind: 'embedded'
         },
         description: 'Reference item that this component should render'
+      },
+      cornerRadius: {
+        type: 'number',
+        value: 0,
+        name: 'Corner radius',
+        min: 0
       },
       placement: {
         type: 'choice',
@@ -32847,20 +33073,101 @@ const COMPONENT_FAILED = 'Component Failed';
           kind: 'external'
         }
       },
+      buttonCornerRadius: {
+        type: 'number',
+        value: 0,
+        name: 'Button Corner radius',
+        min: 0,
+        depends: {
+          showButton: true,
+          kind: 'external'
+        }
+      },
+      buttonWidth: {
+        type: 'number',
+        value: 180,
+        name: 'Button width',
+        depends: {
+          showButton: true,
+          kind: 'external'
+        }
+      },
+      buttonHeight: {
+        type: 'number',
+        value: 40,
+        name: 'Button height',
+        depends: {
+          showButton: true,
+          kind: 'external'
+        }
+      },
       showProgressBar: {
         type: 'boolean',
         value: true,
-        name: 'Should progress bar'
+        name: 'Show progress bar'
       },
       progressColor1: {
         type: 'color',
         value: 'rgba(24,127,191,1)',
-        name: 'Progress bar color 1'
+        name: 'Progress bar color 1',
+        depends: {
+          showProgressBar: true
+        }
       },
       progressColor2: {
         type: 'color',
         value: 'rgba(140,214,219,1)',
-        name: 'Progress bar color 2'
+        name: 'Progress bar color 2',
+        depends: {
+          showProgressBar: true
+        }
+      },
+      showBackButton: {
+        type: 'boolean',
+        value: true,
+        name: 'Show back button',
+        depends: {
+          kind: 'external'
+        }
+      },
+      backButtonFill: {
+        type: 'advanced-color',
+        value: {
+          type: 'solid',
+          color: 'rgba(102,102,102,1.0)'
+        },
+        name: 'Button Fill',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
+      },
+      backButtonTextColor: {
+        type: 'color',
+        value: 'rgba(245,245,245,1.0)',
+        name: 'Back button text color',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
+      },
+      backButtonVPad: {
+        type: 'number',
+        value: 20,
+        name: 'Back Button Vertical Padding',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
+      },
+      backButtonHPad: {
+        type: 'number',
+        value: 20,
+        name: 'Back Button Horizontal Padding',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
       }
     },
     editorProps: {
@@ -32879,6 +33186,8 @@ const COMPONENT_FAILED = 'Component Failed';
         name: COMPONENT_LOADED_EVENT
       }, {
         name: COMPONENT_FAILED
+      }, {
+        name: COMPONENT_DESTROYED
       }];
     }
 
@@ -32907,8 +33216,9 @@ const COMPONENT_FAILED = 'Component Failed';
       buttonHovered: false,
       buttonShown: this.item.shapeProps.kind === 'external' && this.item.shapeProps.showButton && !(this.item._childItems && this.item._childItems.length > 0),
       isLoading: false,
-      hideTextSlot: false,
-      textStyle: this.createTextStyle()
+      hideTextSlot: null,
+      textStyle: this.createTextStyle(),
+      bodyTextStyle: this.createBodyTextStyle()
     };
   },
 
@@ -32926,6 +33236,26 @@ const COMPONENT_FAILED = 'Component Failed';
       this.isLoading = false;
       this.buttonHovered = false;
       this.textStyle = this.createTextStyle();
+      this.bodyTextStyle = this.createBodyTextStyle();
+    },
+
+    createBodyTextStyle() {
+      let style = {};
+
+      if (this.item.textSlots && this.item.textSlots.body) {
+        style = (0,ItemText/* generateTextStyle */.A)(this.item.textSlots.body);
+        const btnArea = calculateButtonArea(this.item, this.item.shapeProps.buttonWidth, this.item.shapeProps.buttonHeight);
+        style.width = `${this.item.area.w}px`;
+        let h = this.item.area.h;
+
+        if (this.item.shapeProps.kind === 'external' && this.item.shapeProps.showButton) {
+          h = btnArea.y;
+        }
+
+        style.height = `${h}px`;
+      }
+
+      return style;
     },
 
     createTextStyle() {
@@ -32933,7 +33263,7 @@ const COMPONENT_FAILED = 'Component Failed';
 
       if (this.item.textSlots && this.item.textSlots.button) {
         style = (0,ItemText/* generateTextStyle */.A)(this.item.textSlots.button);
-        const textArea = calculateButtonArea(this.item, 180, 40);
+        const textArea = calculateButtonArea(this.item, this.item.shapeProps.buttonWidth, this.item.shapeProps.buttonHeight);
         style.width = `${textArea.w}px`;
         style.height = `${textArea.h}px`;
       }
@@ -32943,13 +33273,13 @@ const COMPONENT_FAILED = 'Component Failed';
 
     onItemTextSlotEditTriggered(item, slotName, area, markupDisabled) {
       if (item.id === this.item.id) {
-        this.hideTextSlot = true;
+        this.hideTextSlot = slotName;
       }
     },
 
     onItemTextSlotEditCanceled(item, slotName) {
       if (item.id === this.item.id) {
-        this.hideTextSlot = false;
+        this.hideTextSlot = null;
       }
     },
 
@@ -33004,7 +33334,25 @@ const COMPONENT_FAILED = 'Component Failed';
     },
 
     buttonArea() {
-      return calculateButtonArea(this.item, 180, 40);
+      return calculateButtonArea(this.item, this.item.shapeProps.buttonWidth, this.item.shapeProps.buttonHeight);
+    },
+
+    bodyTextSlotHeight() {
+      const btnArea = calculateButtonArea(this.item, this.item.shapeProps.buttonWidth, this.item.shapeProps.buttonHeight);
+
+      if (this.item.shapeProps.kind === 'external' && this.item.shapeProps.showButton) {
+        return btnArea.y;
+      }
+
+      return this.item.area.h;
+    },
+
+    sanitizedBodyText() {
+      if (this.item.textSlots && this.item.textSlots.body) {
+        return htmlSanitize_default()(this.item.textSlots.body.text);
+      }
+
+      return '';
     },
 
     sanitizedButtonText() {
@@ -52104,10 +52452,14 @@ const lastMousePosition = {
         const itemId = element.getAttribute('data-item-id');
 
         if (itemId) {
-          return {
-            type: 'item',
-            item: this.schemeContainer.findItemById(itemId)
-          };
+          const item = this.schemeContainer.findItemById(itemId);
+
+          if (item) {
+            return {
+              type: 'item',
+              item
+            };
+          }
         }
 
         const connectorStarterItemId = element.getAttribute('data-connector-starter-item-id');
@@ -52318,8 +52670,8 @@ const lastMousePosition = {
     },
 
     /**
-     * 
-     * @param {Array} items 
+     *
+     * @param {Array} items
      * @param {Object} itemsForInit - used for collecting items that have subscribed for init event
      */
     indexUserEventsInItems(items, itemsForInit) {
@@ -52634,7 +52986,7 @@ const lastMousePosition = {
 
     onItemCustomEvent(event) {
       if (event.eventName === 'clicked') {
-        // handling links and toolip/side-panel appearance 
+        // handling links and toolip/side-panel appearance
         const item = this.schemeContainer.findItemById(event.itemId);
 
         if (item.links && item.links.length > 0) {
@@ -56069,7 +56421,7 @@ class StateInteract extends states_State {
   }
 
   handleItemHoverEvents(object) {
-    if (object && object.type === 'item') {
+    if (object && object.type === 'item' && object.item) {
       if (!this.currentHoveredItem) {
         if (object.item.meta && Array.isArray(object.item.meta.ancestorIds)) {
           this.hoveredItemIds = new Set(object.item.meta.ancestorIds.concat([object.item.id]));
