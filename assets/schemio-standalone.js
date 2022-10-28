@@ -9428,6 +9428,7 @@ const defaultItemDefinition = {
   selfOpacity: 100,
   visible: true,
   tags: [],
+  links: [],
   blendMode: 'normal',
   cursor: 'default',
   shape: 'none',
@@ -9517,15 +9518,15 @@ function traverseItems(rootItem, callback) {
   }
 }
 /**
- * 
- * @param {Item} item 
+ *
+ * @param {Item} item
  * @returns true if item has meaningfull description
  */
 
 function hasItemDescription(item) {
   /*
   This is very dirty but it is the simplest way to check if the item has a proper description
-  If would only check for non-empty strings, then it would still show side panel 
+  If would only check for non-empty strings, then it would still show side panel
   even when description is an empty paragraph like "<p></p>"
   This happens when you use rich text editor and delete the entire description.
   Obviously it would be better to check for actual text elements inside the strings but it is also an overkill.
@@ -9537,7 +9538,7 @@ const _supportedStyleTypes = new Set(['color', 'advanced-color', 'stroke-pattern
 /**
  * Applies item styling (shapeProps) to item based on the shapeProps of reference item
  * It only applies simple props and does not change element selectors, path-points etc.
- * @param {Item} referenceItem 
+ * @param {Item} referenceItem
  * @param {Item} dstItem
  */
 
@@ -9562,6 +9563,19 @@ function applyStyleFromAnotherItem(referenceItem, dstItem) {
     if (propDescriptor && dstPropDescriptor && propDescriptor.type === dstPropDescriptor.type && _supportedStyleTypes.has(propDescriptor.type)) {
       dstItem.shapeProps[propName] = utils.clone(value);
     }
+  });
+  forEach(referenceItem.textSlots, (refTextSlot, slotName) => {
+    if (!dstItem.textSlots.hasOwnProperty(slotName)) {
+      return;
+    }
+
+    forEach(defaultTextSlotProps, (val, propName) => {
+      if (propName === 'text') {
+        return;
+      }
+
+      dstItem.textSlots[slotName][propName] = utils.clone(refTextSlot[propName]);
+    });
   });
 }
 function getItemPropertyDescriptionForShape(shape, propertyPath) {
@@ -9611,7 +9625,7 @@ function getItemPropertyDescriptionForShape(shape, propertyPath) {
 /* harmony import */ var shortid__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(shortid__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var _defaultify__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(2643);
 /* harmony import */ var _components_editor_items_shapes_StandardCurves_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(8270);
-/* harmony import */ var _userevents_functions_Functions_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(6703);
+/* harmony import */ var _userevents_functions_Functions_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(3013);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_6___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_6__);
 /* harmony import */ var _utils__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(4691);
@@ -9634,8 +9648,8 @@ function enrichItemWithStandardShapeProps(item) {
   (0,_defaultify__WEBPACK_IMPORTED_MODULE_3__/* .enrichObjectWithDefaults */ .I)(item.shapeProps, _Item__WEBPACK_IMPORTED_MODULE_0__/* .STANDARD_SHAPE_PROPS */ .$9);
 }
 /**
- * 
- * @param {*} action 
+ *
+ * @param {*} action
  * @returns {Boolean} true if action is valid, false if it is not valid. In such case the action will be removed
  */
 
@@ -9680,7 +9694,7 @@ function fixAndEnrichBehaviorEvents(behavior) {
 /**
  * This function is needed since curves were changed to support multiple paths in a single curve item
  * Also the shape id changed from "curve" to "path"
- * @param {*} item 
+ * @param {*} item
  */
 
 
@@ -10065,8 +10079,8 @@ function prepareSchemeForSaving(scheme) {
 }
 // EXTERNAL MODULE: ./src/ui/logger.js
 var logger = __webpack_require__(2017);
-// EXTERNAL MODULE: ./src/ui/userevents/functions/Functions.js + 31 modules
-var Functions = __webpack_require__(6703);
+// EXTERNAL MODULE: ./src/ui/userevents/functions/Functions.js + 32 modules
+var Functions = __webpack_require__(3013);
 // EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
 var EventBus = __webpack_require__(536);
 // EXTERNAL MODULE: ./src/ui/animations/ValueAnimation.js
@@ -11025,6 +11039,8 @@ class SchemeContainer {
     }
 
     const rectItem = createDefaultRectItem();
+    rectItem.shape = 'dummy';
+    rectItem.selfOpacity = 0;
     rectItem.id = shortid_default().generate();
     rectItem.meta = {
       isComponentContainer: true
@@ -11037,15 +11053,10 @@ class SchemeContainer {
     rectItem.area.py = 0;
     rectItem.area.sx = sx;
     rectItem.area.sy = sy;
-    rectItem.shapeProps.fill = {
-      type: 'none'
-    };
-    rectItem.shapeProps.strokeSize = 0;
     rectItem._childItems = childItems;
 
     if (componentItem.shapeProps.kind === 'external') {
-      const maxZoomBack = this.screenTransform.scale * 100;
-      const backButton = (0,Component/* generateComponentGoBackButton */.Si)(componentItem, rectItem.area, maxZoomBack);
+      const backButton = (0,Component/* generateComponentGoBackButton */.Si)(componentItem, rectItem.area, this.screenTransform);
 
       if (backButton) {
         rectItem._childItems.push(backButton);
@@ -13339,7 +13350,7 @@ class SchemeContainer {
 /* harmony export */ });
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _functions_Functions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(6703);
+/* harmony import */ var _functions_Functions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(3013);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -13463,7 +13474,7 @@ class Compiler {
 
 /***/ }),
 
-/***/ 6703:
+/***/ 3013:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -13943,7 +13954,7 @@ function createItemTransform(item, schemeContainer) {
   return transform;
 }
 
-function calculateBoundingBox(item, schemeContainer, offset) {
+function calculateBoundingBox(item, schemeContainer) {
   const points = [{
     x: 0,
     y: 0
@@ -13980,10 +13991,10 @@ function calculateBoundingBox(item, schemeContainer, offset) {
     }
   });
   return {
-    x: minPoint.x - offset,
-    y: minPoint.y - offset,
-    w: maxPoint.x - minPoint.x + offset * 2,
-    h: maxPoint.y - minPoint.y + offset * 2
+    x: minPoint.x,
+    y: minPoint.y,
+    w: maxPoint.x - minPoint.x,
+    h: maxPoint.y - minPoint.y
   };
 }
 /**
@@ -13991,7 +14002,7 @@ function calculateBoundingBox(item, schemeContainer, offset) {
  * @param {*} area - are in world which needs to be brought into screen
  * @param {*} width  - screen width
  * @param {*} height  - screen height
- * @param {*} screenOffset - offset in pixels from each side of the screen. This is needed in order to make it visualy more pleasant 
+ * @param {*} screenOffset - offset in pixels from each side of the screen. This is needed in order to make it visualy more pleasant
  * @param {*} oldX  - old x of screen transform
  * @param {*} oldY  - old y of screen transform
  * @param {*} oldZoom  - old scale of screen transform
@@ -14110,7 +14121,7 @@ function isInsideHUD(item, schemeContainer) {
       return;
     }
 
-    const area = calculateBoundingBox(item, schemeContainer, 10);
+    const area = calculateBoundingBox(item, schemeContainer);
     let newZoom = 1.0;
     const width = schemeContainer.screenSettings.width;
     const height = schemeContainer.screenSettings.height;
@@ -16749,10 +16760,67 @@ const behaviorCompiler = new Compiler/* default */.Z();
   }
 
 });
+;// CONCATENATED MODULE: ./src/ui/userevents/functions/TransformScreenFunction.js
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
+
+/* harmony default export */ const TransformScreenFunction = ({
+  name: 'Transform Screen (Hidden)',
+  description: 'Animates changing screen transform',
+  args: {
+    x: {
+      name: 'x',
+      type: 'number',
+      value: 0
+    },
+    y: {
+      name: 'y',
+      type: 'number',
+      value: 0
+    },
+    scale: {
+      name: 'scale',
+      type: 'number',
+      value: 0
+    }
+  },
+
+  argsToShortString(args) {
+    if (args.animated) {
+      return `animated, ${args.animationDuration} sec`;
+    }
+
+    return 'instant';
+  },
+
+  execute(item, args, schemeContainer, userEventBus, resultCallback) {
+    const oldX = schemeContainer.screenTransform.x;
+    const oldY = schemeContainer.screenTransform.y;
+    const oldZoom = schemeContainer.screenTransform.scale;
+    AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+      durationMillis: 500.0,
+      animationType: 'ease-in-out',
+      update: t => {
+        schemeContainer.screenTransform.scale = oldZoom * (1.0 - t) + args.scale * t;
+        schemeContainer.screenTransform.x = oldX * (1.0 - t) + args.x * t;
+        schemeContainer.screenTransform.y = oldY * (1.0 - t) + args.y * t;
+      },
+      destroy: () => {
+        EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, schemeContainer.screenTransform);
+        resultCallback();
+      }
+    }));
+  }
+
+});
 ;// CONCATENATED MODULE: ./src/ui/userevents/functions/Functions.js
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 
 
 
@@ -16790,6 +16858,7 @@ const behaviorCompiler = new Compiler/* default */.Z();
     show: ShowFunction,
     set: SetFunction,
     zoomToIt: ZoomToItFunction,
+    _transformScreen: TransformScreenFunction,
     particleEffect: ItemParticleEffectFunction,
     crawlEffect: CrawlEffectFunction,
     blinkEffect: BlinkEffectFunction,
@@ -32416,6 +32485,28 @@ var render = function () {
         },
       }),
       _vm._v(" "),
+      _vm.hideTextSlot !== "body" && _vm.bodyTextShown
+        ? _c(
+            "foreignObject",
+            {
+              attrs: {
+                x: 0,
+                y: 0,
+                width: _vm.item.area.w,
+                height: _vm.bodyTextSlotHeight,
+              },
+            },
+            [
+              _c("div", {
+                staticClass: "item-text-container",
+                style: _vm.bodyTextStyle,
+                attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+                domProps: { innerHTML: _vm._s(_vm.sanitizedBodyText) },
+              }),
+            ]
+          )
+        : _vm._e(),
+      _vm._v(" "),
       !(_vm.isLoading && _vm.item.shapeProps.showProgressBar) &&
       _vm.buttonShown &&
       _vm.buttonArea.w > 0 &&
@@ -32446,28 +32537,6 @@ var render = function () {
                     stroke: _vm.item.shapeProps.buttonHoverStrokeColor,
                   },
                 }),
-            _vm._v(" "),
-            _vm.hideTextSlot !== "body"
-              ? _c(
-                  "foreignObject",
-                  {
-                    attrs: {
-                      x: 0,
-                      y: 0,
-                      width: _vm.item.area.w,
-                      height: _vm.bodyTextSlotHeight,
-                    },
-                  },
-                  [
-                    _c("div", {
-                      staticClass: "item-text-container",
-                      style: _vm.bodyTextStyle,
-                      attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
-                      domProps: { innerHTML: _vm._s(_vm.sanitizedBodyText) },
-                    }),
-                  ]
-                )
-              : _vm._e(),
             _vm._v(" "),
             _vm.hideTextSlot !== "button"
               ? _c(
@@ -32534,40 +32603,47 @@ var render = function () {
         : _vm._e(),
       _vm._v(" "),
       !_vm.isLoading && _vm.item.meta && _vm.item.meta.componentLoadFailed
-        ? _c("g", [
-            _c("rect", {
-              attrs: {
-                x: 0,
-                y: 0,
-                width: _vm.item.area.w,
-                height: _vm.item.area.h,
-                fill: "rgba(250, 70, 70)",
-              },
-            }),
-            _vm._v(" "),
-            _c(
-              "foreignObject",
-              {
+        ? _c(
+            "g",
+            {
+              staticStyle: { cursor: "pointer" },
+              on: { click: _vm.resetFailureMessage },
+            },
+            [
+              _c("rect", {
                 attrs: {
                   x: 0,
                   y: 0,
                   width: _vm.item.area.w,
                   height: _vm.item.area.h,
+                  fill: "rgba(250, 70, 70)",
                 },
-              },
-              [
-                _c(
-                  "div",
-                  {
-                    staticClass: "item-text-container",
-                    style: _vm.failureMessageStyle,
-                    attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+              }),
+              _vm._v(" "),
+              _c(
+                "foreignObject",
+                {
+                  attrs: {
+                    x: 0,
+                    y: 0,
+                    width: _vm.item.area.w,
+                    height: _vm.item.area.h,
                   },
-                  [_c("b", [_vm._v("Loading failed")])]
-                ),
-              ]
-            ),
-          ])
+                },
+                [
+                  _c(
+                    "div",
+                    {
+                      staticClass: "item-text-container",
+                      style: _vm.failureMessageStyle,
+                      attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+                    },
+                    [_c("b", [_vm._v("Loading failed")])]
+                  ),
+                ]
+              ),
+            ]
+          )
         : _vm._e(),
       _vm._v(" "),
       _vm.item.meta && _vm.item.meta.cyclicComponent
@@ -32710,6 +32786,7 @@ var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
 //
 //
 //
+//
 
 
 
@@ -32745,11 +32822,7 @@ function calculateButtonArea(item, maxWidth, maxHeight) {
 const COMPONENT_LOADED_EVENT = 'Component Loaded';
 const COMPONENT_FAILED = 'Component Failed';
 const COMPONENT_DESTROYED = 'Component Destroyed';
-function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack) {
-  if (!maxZoomBack) {
-    maxZoomBack = 100;
-  }
-
+function generateComponentGoBackButton(componentItem, containerArea, currentScreenTransform) {
   if (!componentItem.shapeProps.showBackButton || componentItem.shapeProps.kind !== 'external') {
     return null;
   }
@@ -32791,20 +32864,17 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
         actions: [{
           id: shortid_default().generate(),
           element: '#' + componentItem.id,
-          method: 'destroyComponent',
-          args: {}
+          method: '_transformScreen',
+          args: {
+            x: currentScreenTransform.x,
+            y: currentScreenTransform.y,
+            scale: currentScreenTransform.scale
+          }
         }, {
           id: shortid_default().generate(),
           element: '#' + componentItem.id,
-          method: 'zoomToIt',
-          args: {
-            closeEnough: false,
-            animated: true,
-            animationDuration: 0.5,
-            minZoom: 0,
-            maxZoom: maxZoomBack,
-            inBackground: false
-          }
+          method: 'destroyComponent',
+          args: {}
         }]
       }, {
         id: shortid_default().generate(),
@@ -32889,7 +32959,7 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
       let hasButton = false;
 
       if (item.shapeProps.kind === 'external' && item.shapeProps.showButton) {
-        h = btnArea.h;
+        h = btnArea.y;
         hasButton = true;
       }
 
@@ -32945,6 +33015,30 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
 
     },
     args: {
+      kind: {
+        type: 'choice',
+        value: 'external',
+        name: 'Kind',
+        options: ['external', 'embedded'],
+        description: 'External - allows to fetch other documents and render them inside the component. Embedded - uses the items in the same document'
+      },
+      schemeId: {
+        type: 'scheme-ref',
+        value: '',
+        name: 'External Document',
+        depends: {
+          kind: 'external'
+        },
+        description: 'ID of the document that this component should load'
+      },
+      referenceItem: {
+        type: 'element',
+        name: 'Item',
+        depends: {
+          kind: 'embedded'
+        },
+        description: 'Reference item that this component should render'
+      },
       fill: {
         type: 'advanced-color',
         value: {
@@ -32967,30 +33061,6 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
         type: 'stroke-pattern',
         value: 'solid',
         name: 'Stroke pattern'
-      },
-      kind: {
-        type: 'choice',
-        value: 'external',
-        name: 'Kind',
-        options: ['external', 'embedded'],
-        description: 'External - allows to fetch other documents and render them inside the component. Embedded - uses the items in the same document'
-      },
-      schemeId: {
-        type: 'scheme-ref',
-        value: '',
-        name: 'Doc ID',
-        depends: {
-          kind: 'external'
-        },
-        description: 'ID of the document that this component should load'
-      },
-      referenceItem: {
-        type: 'element',
-        name: 'Item',
-        depends: {
-          kind: 'embedded'
-        },
-        description: 'Reference item that this component should render'
       },
       cornerRadius: {
         type: 'number',
@@ -33104,14 +33174,18 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
       showProgressBar: {
         type: 'boolean',
         value: true,
-        name: 'Show progress bar'
+        name: 'Show progress bar',
+        depends: {
+          kind: 'external'
+        }
       },
       progressColor1: {
         type: 'color',
         value: 'rgba(24,127,191,1)',
         name: 'Progress bar color 1',
         depends: {
-          showProgressBar: true
+          showProgressBar: true,
+          kind: 'external'
         }
       },
       progressColor2: {
@@ -33119,7 +33193,8 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
         value: 'rgba(140,214,219,1)',
         name: 'Progress bar color 2',
         depends: {
-          showProgressBar: true
+          showProgressBar: true,
+          kind: 'external'
         }
       },
       showBackButton: {
@@ -33212,9 +33287,11 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
   },
 
   data() {
+    const externalItemsMounted = this.item._childItems && this.item._childItems.length > 0;
     return {
       buttonHovered: false,
-      buttonShown: this.item.shapeProps.kind === 'external' && this.item.shapeProps.showButton && !(this.item._childItems && this.item._childItems.length > 0),
+      buttonShown: this.item.shapeProps.kind === 'external' && this.item.shapeProps.showButton && !externalItemsMounted,
+      bodyTextShown: !externalItemsMounted,
       isLoading: false,
       hideTextSlot: null,
       textStyle: this.createTextStyle(),
@@ -33231,6 +33308,7 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
     onItemChanged() {
       if (this.item._childItems && this.item._childItems.length > 0) {
         this.buttonShown = false;
+        this.bodyTextShown = false;
       }
 
       this.isLoading = false;
@@ -33309,6 +33387,11 @@ function generateComponentGoBackButton(componentItem, containerArea, maxZoomBack
       if (this.item.id === item.id) {
         this.isLoading = false;
       }
+    },
+
+    resetFailureMessage() {
+      this.item.meta.componentLoadFailed = false;
+      this.$forceUpdate();
     }
 
   },
