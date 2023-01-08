@@ -2162,6 +2162,10 @@ function defaultifyObject(obj, defaultObject) {
  */
 
 function enrichObjectWithDefaults(obj, defaultObj) {
+  if (!obj) {
+    return;
+  }
+
   for (let field in defaultObj) {
     if (defaultObj.hasOwnProperty(field)) {
       if (field === '*') {
@@ -2198,14 +2202,19 @@ function enrichObjectWithDefaults(obj, defaultObj) {
 /***/ }),
 
 /***/ 3762:
-/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
+"use strict";
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "Z": () => (/* export default binding */ __WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* unused harmony export stripAllHtml */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 const sanitizeHtml = __webpack_require__(1036);
 
-module.exports = function (html) {
+/* harmony default export */ function __WEBPACK_DEFAULT_EXPORT__(html) {
   return sanitizeHtml(html, {
     allowedTags: ['blockquote', 'code', 'div', 'em', 'li', 'ol', 'p', 'strong', 'b', 's', 'i', 'u', 'ul', 'img', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
     allowedAttributes: {
@@ -2213,7 +2222,13 @@ module.exports = function (html) {
       'img': ['src']
     }
   });
-};
+}
+;
+function stripAllHtml(html) {
+  return sanitizeHtml(html, {
+    allowedTags: []
+  });
+}
 
 /***/ }),
 
@@ -2240,7 +2255,7 @@ class Animation {
     this.id = shortid__WEBPACK_IMPORTED_MODULE_0___default().generate();
   }
   /**
-   * Invoked before playing. 
+   * Invoked before playing.
    * @returns Boolean status whether it has succeeded initializing animation elements
    */
 
@@ -2252,7 +2267,7 @@ class Animation {
    * Function that is invoked on each frame.
    * In case it returns false - it means that animation has finished and it will invoke destroy function
    * @param {Number} dt delta time between frames of animation
-   * @returns Boolean status that specifies whether animation should proceed. 
+   * @returns Boolean status that specifies whether animation should proceed.
    */
 
 
@@ -2309,8 +2324,10 @@ class Animation {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "Z": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */   "aG": () => (/* binding */ stopAllAnimationsForEntityInAnimationRegistry),
+/* harmony export */   "oK": () => (/* binding */ playInAnimationRegistry)
 /* harmony export */ });
+/* unused harmony exports createAnimationRegistry, destroyAnimationRegistry */
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_0__);
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -2318,23 +2335,130 @@ class Animation {
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
  // desired delta time between loop cycles in milliseconds
 
-const DESIRED_DELTA_TIME = 16;
-let animationsEnabled = true;
-let isAlreadyLooping = false;
-const animations = [];
+const DESIRED_DELTA_TIME = 16; // storing all animation registries in global Map so tat Vue does not make it reactive
+// Can't figure out a better way to do this.
 
-function loopCycle(timeMarker, deltaTime) {
-  if (animations.length === 0) {
+const animationRegistries = new Map();
+
+class AnimationRegistry {
+  constructor() {
+    this.animationsEnabled = true;
+    this.isAlreadyLooping = false;
+    this.animations = [];
+  }
+  /**
+   *
+   * @param {Animation} animation
+   * @param {String} entityId Id of an item. It is needed in order to be able to stop all animations for a specific item
+   * @param {String} animationId Id of animation. It is used to avoid race conditions when same animations are played in parallel for the same item
+   */
+
+
+  play(animation, entityId, animationId) {
+    // checking whether such animation already exists
+    // this can be a case for frame player
+    // instead of linear search this could be optimized by using a map of animation ids
+    // but I don't think we are going to be using that many animations at the same time,
+    // so it's fine like this for now
+    for (let i = 0; i < this.animations.length; i++) {
+      if (this.animations[i].id === animation.id) {
+        this.animations[i].enabled = false;
+
+        try {
+          this.animations[i].enabled = false;
+        } catch (err) {
+          console.error(err);
+          this.animations[i].destroy();
+        }
+
+        this.animations.splice(i, 1);
+        break;
+      }
+    }
+
+    animation.entityId = entityId;
+    animation.animationId = animationId;
+
+    if (animationId) {
+      stopSimilarAnimationForItem(this, entityId, animationId);
+    }
+
+    let success = false;
+
+    try {
+      animation.enabled = true;
+      success = animation.init();
+    } catch (e) {
+      console.error('Could not initialize animation', e);
+    }
+
+    if (success) {
+      this.animations.push(animation);
+      startAnimationLoop(this);
+    } else {
+      try {
+        animation.destroy();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
+  stopAllAnimations() {
+    const animations = this.animations;
+    this.animations = [];
+    forEach(animations, animation => {
+      try {
+        animation.destroy();
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  disableAnimations() {
+    this.animationsEnabled = false;
+  }
+
+  enableAnimations() {
+    this.animationsEnabled = true;
+  }
+
+  stopAllAnimationsForEntity(entityId) {
+    forEach(this.animations, animation => {
+      if (animation.entityId === entityId) {
+        animation.enabled = false;
+
+        try {} catch (err) {
+          console.error(err);
+          animation.destroy();
+        }
+      }
+    });
+  }
+
+}
+/**
+ *
+ * @param {AnimationRegistry} registry
+ * @param {*} timeMarker
+ * @param {*} deltaTime
+ * @returns
+ */
+
+
+function loopCycle(registry, timeMarker, deltaTime) {
+  if (registry.animations.length === 0) {
     // stopping the empty loop as it does not make sense since there are no animations
-    isAlreadyLooping = false;
+    registry.isAlreadyLooping = false;
     return;
   }
 
-  if (animationsEnabled) {
+  if (registry.animationsEnabled) {
     let i = 0;
 
-    while (i < animations.length) {
-      let animation = animations[i];
+    while (i < registry.animations.length) {
+      let animation = registry.animations[i];
       let status = true;
 
       try {
@@ -2355,7 +2479,7 @@ function loopCycle(timeMarker, deltaTime) {
           console.error(e);
         }
 
-        animations.splice(i, 1);
+        registry.animations.splice(i, 1);
       } else {
         i += 1;
       }
@@ -2363,98 +2487,80 @@ function loopCycle(timeMarker, deltaTime) {
 
     window.requestAnimationFrame(() => {
       const nextTimeMarker = performance.now();
-      loopCycle(nextTimeMarker, nextTimeMarker - timeMarker);
+      loopCycle(registry, nextTimeMarker, nextTimeMarker - timeMarker);
     });
   } else {
-    isAlreadyLooping = false;
+    registry.isAlreadyLooping = false;
   }
 }
+/**
+ *
+ * @param {AnimationRegistry} registry
+ */
 
-function startAnimationLoop() {
-  if (animationsEnabled && !isAlreadyLooping) {
-    isAlreadyLooping = true;
-    window.requestAnimationFrame(() => loopCycle(performance.now(), DESIRED_DELTA_TIME));
+
+function startAnimationLoop(registry) {
+  if (registry.animationsEnabled && !registry.isAlreadyLooping) {
+    registry.isAlreadyLooping = true;
+    window.requestAnimationFrame(() => loopCycle(registry, performance.now(), DESIRED_DELTA_TIME));
   }
 }
+/**
+ *
+ * @param {AnimationRegistry} registry
+ * @param {*} entityId
+ * @param {*} animationId
+ */
 
-function stopSimilarAnimationForItem(entityId, animationId) {
-  lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(animations, animation => {
+
+function stopSimilarAnimationForItem(registry, entityId, animationId) {
+  forEach(registry.animations, animation => {
     if (animation.entityId === entityId && animation.animationId === animationId) {
       animation.enabled = false;
     }
   });
 }
+/**
+ *
+ * @param {String} editorId
+ * @returns {AnimationRegistry}
+ */
 
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = ({
-  /**
-   *
-   * @param {Animation} animation
-   * @param {String} entityId Id of an item. It is needed in order to be able to stop all animations for a specific item
-   * @param {String} animationId Id of animation. It is used to avoid race conditions when same animations are played in parallel for the same item
-   */
-  play(animation, entityId, animationId) {
-    // checking whether such animation already exists
-    // this can be a case for frame player
-    // instead of linear search this could be optimized by using a map of animation ids
-    // but I don't think we are going to be using that many animations at the same time,
-    // so it's fine like this for now
-    for (let i = 0; i < animations.length; i++) {
-      if (animations[i].id === animation.id) {
-        animations.enabled = false;
-        animations.splice(i, 1);
-        break;
-      }
-    }
 
-    animation.entityId = entityId;
-    animation.animationId = animationId;
-
-    if (animationId) {
-      stopSimilarAnimationForItem(entityId, animationId);
-    }
-
-    let success = false;
-
-    try {
-      animation.enabled = true;
-      success = animation.init();
-    } catch (e) {
-      console.error('Could not initialize animation', e);
-    }
-
-    if (success) {
-      animations.push(animation);
-      startAnimationLoop();
-    } else {
-      animation.destroy();
-    }
-  },
-
-  stopAllAnimations() {
-    const animations = this.animations;
-    this.animations = [];
-    lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(animations, animation => {
-      animation.destroy();
-    });
-  },
-
-  disableAnimations() {
-    animationsEnabled = false;
-  },
-
-  enableAnimations() {
-    animationsEnabled = true;
-  },
-
-  stopAllAnimationsForEntity(entityId) {
-    lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(animations, animation => {
-      if (animation.entityId === entityId) {
-        animation.enabled = false;
-      }
-    });
+function createAnimationRegistry(editorId) {
+  if (animationRegistries.has(editorId)) {
+    return animationRegistries.get(editorId);
   }
 
-});
+  const registry = new AnimationRegistry();
+  animationRegistries.set(editorId, registry);
+  return registry;
+}
+function playInAnimationRegistry(editorId, animation, entityId, animationId) {
+  const registry = animationRegistries.get(editorId);
+
+  if (!registry) {
+    return;
+  }
+
+  registry.play(animation, entityId, animationId);
+}
+function stopAllAnimationsForEntityInAnimationRegistry(editorId, entityId) {
+  const registry = animationRegistries.get(editorId);
+
+  if (!registry) {
+    return;
+  }
+
+  registry.stopAllAnimationsForEntity(entityId);
+}
+function destroyAnimationRegistry(editorId) {
+  if (animationRegistries.has(editorId)) {
+    const registry = animationRegistries.get(editorId);
+    registry.stopAllAnimations();
+    animationRegistries.delete(editorId);
+  }
+}
 
 /***/ }),
 
@@ -2463,9 +2569,9 @@ function stopSimilarAnimationForItem(entityId, animationId) {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "ZP": () => (/* binding */ ValueAnimation),
 /* harmony export */   "jU": () => (/* binding */ Interpolations),
-/* harmony export */   "rJ": () => (/* binding */ convertTime),
-/* harmony export */   "ZP": () => (/* binding */ ValueAnimation)
+/* harmony export */   "rJ": () => (/* binding */ convertTime)
 /* harmony export */ });
 /* harmony import */ var _Animation__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(2217);
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -2583,7 +2689,7 @@ class ValueAnimation extends _Animation__WEBPACK_IMPORTED_MODULE_0__/* ["default
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "Z": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _components_editor_EventBus__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(536);
+/* harmony import */ var _components_editor_EditorEventBus__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(8595);
 /* harmony import */ var _components_editor_items_shapes_Shape__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(3363);
 /* harmony import */ var _myMath__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(3590);
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -2738,7 +2844,7 @@ class ValueAnimation extends _Animation__WEBPACK_IMPORTED_MODULE_0__/* ["default
     item.area.x = localPoint.x - item.area.w / 2;
     item.area.y = localPoint.y - item.area.h / 2;
     schemeContainer.reindexItemTransforms(item);
-    _components_editor_EventBus__WEBPACK_IMPORTED_MODULE_0__/* ["default"].emitItemChanged */ .Z.emitItemChanged(item.id);
+    _components_editor_EditorEventBus__WEBPACK_IMPORTED_MODULE_0__/* ["default"].item.changed.specific.$emit */ .Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
   }
 
 });
@@ -2864,304 +2970,294 @@ function parseColor(text) {
 
 /***/ }),
 
-/***/ 536:
+/***/ 8595:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "Z": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var vue__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(1094);
-/* harmony import */ var vue__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(vue__WEBPACK_IMPORTED_MODULE_2__);
+/* harmony import */ var vue__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(1094);
+/* harmony import */ var vue__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(vue__WEBPACK_IMPORTED_MODULE_1__);
 /* harmony import */ var _logger__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(2017);
-/* harmony import */ var _events__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(8442);
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 
+const log = new _logger__WEBPACK_IMPORTED_MODULE_0__/* .Logger */ .Yd('EditorEventBus');
+const bus = new (vue__WEBPACK_IMPORTED_MODULE_1___default())({});
 
+function generateEvent(editorId, eventName, args) {
+  let fullEvent = editorId + '/' + eventName;
 
-const log = new _logger__WEBPACK_IMPORTED_MODULE_0__/* .Logger */ .Yd('EventBus');
-const EventBus = new (vue__WEBPACK_IMPORTED_MODULE_2___default())({
-  data() {
-    return {
-      START_CREATING_ITEM: 'start-creating-item',
-      START_CONNECTING_ITEM: 'start-connecting-item',
-      START_CURVE_EDITING: 'start-curve-editing',
-      START_DRAWING: 'start-drawing',
-      STOP_DRAWING: 'stop-drawing',
-      COMPONENT_LOAD_REQUESTED: 'component-load-requested',
-      COMPONENT_LOAD_FAILED: 'component-load-failed',
-      COMPONENT_SCHEME_MOUNTED: 'component-scheme-mounted',
-      PLACE_ITEM: 'place-item',
-      CANCEL_CURRENT_STATE: 'cancel-current-state',
-      EDITOR_STATE_CHANGED: 'editor-state-changed',
-      KEY_PRESS: 'key-press',
-      KEY_UP: 'key-up',
-      BRING_TO_VIEW: 'bring-to-view',
-      SCHEME_CHANGE_COMMITED: 'scheme-changed-commited',
-      ANY_ITEM_CLICKED: 'any-item-clicked',
-      ITEM_CHANGED: 'item-changed',
-      ITEM_SELECTED: 'item-selected',
-      ITEM_DESELECTED: 'item-deselected',
-      ANY_ITEM_CHANGED: 'any-item-changed',
-      ANY_ITEM_SELECTED: 'any-item-selected',
-      ANY_ITEM_DESELECTED: 'any-item-deselected',
-      ITEM_HIGHLIGHT_SET: 'item-highlight-set',
-      // used to trigger in-svg text edit of an item
-      ITEM_TEXT_SLOT_EDIT_TRIGGERED: 'item-text-slot-edit-triggered',
-      ITEM_TEXT_SLOT_EDIT_CANCELED: 'item-text-slot-edit-canceled',
-      // emited when user moves one text slot into another
-      ITEM_TEXT_SLOT_MOVED: 'item-text-slot-moved',
-      // used when in place rich text editor is created and mounted, this comes after ITEM_TEXT_SLOT_EDIT_TRIGGERED event
-      ITEM_IN_PLACE_TEXT_EDITOR_CREATED: 'item-in-place-text-editor-created',
-      // triggered when user clicks empty space
-      VOID_CLICKED: 'void-clicked',
-      // triggered when user clicks empty space with right button
-      VOID_RIGHT_CLICKED: 'void-clicked',
-      // triggered when user double clicks empty space
-      VOID_DOUBLE_CLICKED: 'void-double-clicked',
-      // used to trigger display of item description as a tooltip (when in interactive mode)
-      ITEM_TOOLTIP_TRIGGERED: 'item-tooltip-triggered',
-      // used to trigger side panel for specified item in interaction (view) mode
-      ITEM_SIDE_PANEL_TRIGGERED: 'item-side-panel-triggered',
-      // used in view mode in case item has links
-      ITEM_LINKS_SHOW_REQUESTED: 'item-links-show-requested',
-      RIGHT_CLICKED_ITEM: 'right-clicked-item',
-      // used inside ElementPicker and force editor state to switch to StatePickElement
-      ELEMENT_PICK_REQUESTED: 'element-pick-requested',
-      ELEMENT_PICK_CANCELED: 'element-pick-canceled',
-      ELEMENT_PICKED: 'element-picked',
-      CURVE_EDITED: 'curve-edited',
-      CURVE_EDIT_STOPPED: 'curve-edit-stopped',
-      CURVE_EDIT_POINTS_UPDATED: 'curve-edit-points-updated',
-      CUSTOM_CONTEXT_MENU_REQUESTED: 'custom-context-menu-requested',
-      SCREEN_TRANSFORM_UPDATED: 'screen-transform-updated',
-      ITEMS_HIGHLIGHTED: 'items-highlighted',
-      ITEM_SURROUND_CREATED: 'item-surround-created',
-      BEHAVIOR_PANEL_REQUESTED: 'behavior-panel-requested',
-      MULTI_ITEM_EDIT_BOX_ITEMS_UPDATED: 'multi-item-edit-box-items-updated',
-      MULTI_ITEM_EDIT_BOX_AREA_UPDATED: 'multi-item-edit-box-area-updated',
-      ITEM_CREATION_DRAGGED_TO_SVG_EDITOR: 'item-creation-dragged-to-svg-editor',
-      // triggered in case user clicked undo or redo and the scheme was reset to a new state
-      HISTORY_UNDONE: 'history-undone',
-      IMAGE_CROP_TRIGGERED: 'image-crop-triggered',
-      SCHEME_PATCH_REQUESTED: 'scheme-patch-requested',
-      FLOATING_HELPER_PANEL_UPDATED: 'floating-helper-panel-updated',
-      // used for each frame_player item to initialize it's callbacks for its own frame animation
-      FRAME_PLAYER_PREPARED: 'frame-player-prepared',
-      CLICKABLE_MARKERS_TOGGLED: 'clickable-markers-toggled',
-      EXTRA_SHAPE_GROUP_REGISTERED: 'extra-shape-group-registered',
-      ART_PACK_ADDED: 'art-pack-added'
-    };
-  },
-
-  methods: {
-    emitSchemeChangeCommited(affinityId) {
-      this.$emit(EventBus.SCHEME_CHANGE_COMMITED, affinityId);
-    },
-
-    /**
-     * emits an event when a single item is supposed to be highlighted
-     * @param {Array} itemIds array of ids of items that should be highlighted. In case it is set as null or empty - then no items should be highlighted at all.
-     */
-    emitItemsHighlighted(itemIds, options) {
-      const highlightPins = options ? options.highlightPins : false;
-      this.$emit(EventBus.ITEMS_HIGHLIGHTED, itemIds, {
-        highlightPins
-      });
-    },
-
-    /**
-     * @param {string} itemId  id of an item
-     * @param {string} propertyPath  path to a field that was changed. This argument is optional
-     */
-    emitItemChanged(itemId, propertyPath) {
-      this.$emit(this._itemChangedEvent(itemId), propertyPath);
-      this.$emit(EventBus.ANY_ITEM_CHANGED, itemId, propertyPath);
-    },
-
-    subscribeForItemChanged(itemId, callback) {
-      this.$on(this._itemChangedEvent(itemId), callback);
-    },
-
-    unsubscribeForItemChanged(itemId, callback) {
-      this.$off(this._itemChangedEvent(itemId), callback);
-    },
-
-    _itemChangedEvent(itemId) {
-      return `${EventBus.ITEM_CHANGED}/${itemId}`;
-    },
-
-    emitItemSelected(itemId) {
-      this.$emit(this._itemSelectedEvent(itemId));
-      this.$emit(EventBus.ANY_ITEM_SELECTED, itemId);
-    },
-
-    subscribeForItemSelected(itemId, callback) {
-      this.$on(this._itemSelectedEvent(itemId), callback);
-    },
-
-    unsubscribeForItemSelected(itemId, callback) {
-      this.$off(this._itemSelectedEvent(itemId), callback);
-    },
-
-    _itemSelectedEvent(itemId) {
-      return `${EventBus.ITEM_SELECTED}/${itemId}`;
-    },
-
-    emitItemDeselected(itemId) {
-      this.$emit(this._itemDeselectedEvent(itemId));
-      this.$emit(EventBus.ANY_ITEM_DESELECTED, itemId);
-    },
-
-    subscribeForItemDeselected(itemId, callback) {
-      this.$on(this._itemDeselectedEvent(itemId), callback);
-    },
-
-    unsubscribeForItemDeselected(itemId, callback) {
-      this.$off(this._itemDeselectedEvent(itemId), callback);
-    },
-
-    _itemDeselectedEvent(itemId) {
-      return `${EventBus.ITEM_DESELECTED}/${itemId}`;
-    },
-
-    emitAnyItemDeselected() {
-      this.$emit(EventBus.ANY_ITEM_DESELECTED);
-    },
-
-    emitRightClickedItem(item, mouseX, mouseY) {
-      this.$emit(EventBus.RIGHT_CLICKED_ITEM, item, mouseX, mouseY);
-    },
-
-    /**
-     * 
-     * @param {Item} item 
-     * @param {string} slotName 
-     * @param {Area} area - Area of a text slot and not of an item
-     * @param {Boolean} markupDisabled - true if HTML markup is disabled. This means that a simple textarea is going to be used for text editing
-     * @param {Boolean} creatingNewItem - true if it is triggered for a new item (e.g. double clicking void)
-     */
-    emitItemTextSlotEditTriggered(item, slotName, area, markupDisabled, creatingNewItem) {
-      this.$emit(EventBus.ITEM_TEXT_SLOT_EDIT_TRIGGERED, item, slotName, area, markupDisabled, creatingNewItem);
-    },
-
-    emitItemTextSlotEditCanceled(item, slotName) {
-      this.$emit(EventBus.ITEM_TEXT_SLOT_EDIT_CANCELED, item, slotName);
-    },
-
-    emitItemTextSlotMoved(item, slotName, destinationSlotName) {
-      this.$emit(EventBus.ITEM_TEXT_SLOT_MOVED, item, slotName, destinationSlotName);
-    },
-
-    emitItemInPlaceTextEditorCreated(editor) {
-      this.$emit(this.ITEM_IN_PLACE_TEXT_EDITOR_CREATED, editor);
-    },
-
-    emitElementPickRequested(elementPickCallback) {
-      this.$emit(EventBus.ELEMENT_PICK_REQUESTED, elementPickCallback);
-    },
-
-    emitElementPickCanceled() {
-      this.$emit(EventBus.ELEMENT_PICK_CANCELED);
-    },
-
-    emitCurveEdited(item) {
-      this.$emit(EventBus.CURVE_EDITED, item);
-    },
-
-    emitCustomContextMenuRequested(mouseX, mouseY, menuOptions) {
-      this.$emit(EventBus.CUSTOM_CONTEXT_MENU_REQUESTED, mouseX, mouseY, menuOptions);
-    },
-
-    emitItemSurroundCreated(item, boundingBox, padding) {
-      this.$emit(EventBus.ITEM_SURROUND_CREATED, item, boundingBox, padding);
-    },
-
-    emitBringToViewAnimated(area) {
-      this.$emit(EventBus.BRING_TO_VIEW, area, true);
-    },
-
-    emitBringToViewInstantly(area) {
-      this.$emit(EventBus.BRING_TO_VIEW, area, false);
-    },
-
-    emitItemCreationDraggedToSvgEditor(item, pageX, pageY) {
-      this.$emit(EventBus.ITEM_CREATION_DRAGGED_TO_SVG_EDITOR, item, pageX, pageY);
-    },
-
-    emitComponentLoadRequested(item) {
-      this.$emit(EventBus.COMPONENT_LOAD_REQUESTED, item);
-    },
-
-    emitComponentLoadFailed(item) {
-      this.$emit(EventBus.COMPONENT_LOAD_FAILED, item);
-    },
-
-    emitComponentSchemeMounted(item) {
-      this.$emit(EventBus.COMPONENT_SCHEME_MOUNTED, item);
-    },
-
-    emitEditorStateChanged(stateName) {
-      this.$emit(EventBus.EDITOR_STATE_CHANGED, stateName);
-    },
-
-    emitSchemePatchRequested(scheme) {
-      this.$emit(EventBus.SCHEME_PATCH_REQUESTED, scheme);
-    },
-
-    emitFloatingHelperPanelUpdated() {
-      this.$emit(EventBus.FLOATING_HELPER_PANEL_UPDATED);
-    },
-
-    emitFramePlayerPrepared(framePlayerItem, frameCallbacks) {
-      this.$emit(EventBus.FRAME_PLAYER_PREPARED, framePlayerItem, frameCallbacks);
-    }
-
+  if (args && args.length > 0) {
+    return fullEvent + '/' + args.join('/');
   }
-}); // Adding logging of all events in EventBus
 
-const _old$emit = EventBus.$emit;
+  return fullEvent;
+}
 
-EventBus.$emit = (...args) => {
-  log.infoEvent(args[0], args);
+function $on(editorId, eventName, args, callback) {
+  if (!editorId) {
+    throw new Error('editorId should be specified, got: ', editorId);
+  }
 
-  if (_old$emit) {
-    _old$emit.apply(EventBus, args);
+  bus.$on(generateEvent(editorId, eventName, args), callback);
+}
+
+function $off(editorId, eventName, args, callback) {
+  if (!editorId) {
+    throw new Error('editorId should be specified, got: ', editorId);
+  }
+
+  bus.$off(generateEvent(editorId, eventName, args), callback);
+}
+
+function $emit(editorId, eventName, eventArgs, ...emitArgs) {
+  if (!editorId) {
+    throw new Error('editorId should be specified, got: ', editorId);
+  }
+
+  const fullEventName = generateEvent(editorId, eventName, eventArgs);
+  log.infoEvent(fullEventName, emitArgs);
+  bus.$emit(fullEventName, ...emitArgs);
+}
+
+const EditorEventBus = {
+  schemeChangeCommitted: {
+    $on: (editorId, callback) => $on(editorId, 'scheme-change-committed', [], callback),
+    $off: (editorId, callback) => $off(editorId, 'scheme-change-committed', [], callback),
+    $emit: (editorId, affinityId) => $emit(editorId, 'scheme-change-committed', [], affinityId)
+  },
+  item: {
+    custom: {
+      $on: (eventName, editorId, itemId, callback) => $on(editorId, eventName, [itemId], callback),
+      $off: (eventName, editorId, itemId, callback) => $off(editorId, eventName, [itemId], callback),
+      $emit: (eventName, editorId, itemId, ...args) => $emit(editorId, eventName, [itemId], ...args)
+    },
+    selected: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-item-selected', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-item-selected', [], callback),
+        $emit: (editorId, itemId) => $emit(editorId, 'any-item-selected', [], itemId)
+      },
+      specific: {
+        $emit: (editorId, itemId) => EditorEventBus.item.selected.any.$emit(editorId, itemId)
+      }
+    },
+    deselected: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-item-deselected', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-item-deselected', [], callback),
+        $emit: (editorId, itemId) => $emit(editorId, 'any-item-deselected', [], itemId)
+      },
+      specific: {
+        $emit: (editorId, itemId) => EditorEventBus.item.deselected.any.$emit(editorId, itemId)
+      }
+    },
+    clicked: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-item-clicked', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-item-clicked', [], callback),
+        $emit: (editorId, item) => $emit(editorId, 'any-item-clicked', [], item)
+      }
+    },
+    changed: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-item-changed', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-item-changed', [], callback),
+        $emit: (editorId, itemId, propertyPath) => $emit(editorId, 'any-item-changed', [], itemId, propertyPath)
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'item-changed', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'item-changed', [itemId], callback),
+        $emit: (editorId, itemId, propertyPath) => {
+          EditorEventBus.item.changed.any.$emit(editorId, itemId, propertyPath);
+          $emit(editorId, 'item-changed', [itemId], itemId, propertyPath);
+        }
+      }
+    },
+    linksShowRequested: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'item-links-show-requested', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'item-links-show-requested', [], callback),
+        $emit: (editorId, item) => $emit(editorId, 'item-links-show-requested', [], item)
+      }
+    }
+  },
+  textSlot: {
+    triggered: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-text-slot-triggered', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-text-slot-triggered', [], callback),
+        $emit: (editorId, item, slotName, area, markupDisabled, creatingNewItem) => {
+          $emit(editorId, 'any-text-slot-triggered', [], item, slotName, area, markupDisabled, creatingNewItem);
+        }
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'text-slot-triggered', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'text-slot-triggered', [itemId], callback),
+        $emit: (editorId, item, slotName, area, markupDisabled, creatingNewItem) => {
+          EditorEventBus.textSlot.triggered.any.$emit(editorId, item, slotName, area, markupDisabled, creatingNewItem);
+          $emit(editorId, 'text-slot-triggered', [item.id], item, slotName, area, markupDisabled, creatingNewItem);
+        }
+      }
+    },
+    canceled: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-text-slot-canceled', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-text-slot-canceled', [], callback),
+        $emit: (editorId, item, slotName) => {
+          $emit(editorId, 'any-text-slot-canceled', [], item, slotName);
+        }
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'text-slot-canceled', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'text-slot-canceled', [itemId], callback),
+        $emit: (editorId, item, slotName) => {
+          EditorEventBus.textSlot.canceled.any.$emit(editorId, item, slotName);
+          $emit(editorId, 'text-slot-canceled', [item.id], item, slotName);
+        }
+      }
+    },
+    moved: {
+      $on: (editorId, callback) => $on(editorId, 'text-slot-moved', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'text-slot-moved', [], callback),
+      $emit: (editorId, item, slotName, destinationSlotName) => {
+        $emit(editorId, 'text-slot-moved', [], item, slotName, destinationSlotName);
+      }
+    }
+  },
+  inPlaceTextEditor: {
+    created: {
+      $on: (editorId, callback) => $on(editorId, 'in-place-text-editor-created', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'in-place-text-editor-created', [], callback),
+      $emit: (editorId, editor) => {
+        $emit(editorId, 'in-place-text-editor-created', [], editor);
+      }
+    }
+  },
+  void: {
+    clicked: {
+      $on: (editorId, callback) => $on(editorId, 'void-clicked', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'void-clicked', [], callback),
+      $emit: editorId => $emit(editorId, 'void-clicked', [])
+    },
+    doubleClicked: {
+      $on: (editorId, callback) => $on(editorId, 'void-double-clicked', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'void-double-clicked', [], callback),
+      $emit: (editorId, x, y, mx, my) => $emit(editorId, 'void-double-clicked', [], x, y, mx, my)
+    }
+  },
+  component: {
+    loadRequested: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-component-load-requested', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-component-load-requested', [], callback),
+        $emit: (editorId, item) => $emit(editorId, 'any-component-load-requested', [], item)
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'component-load-requested', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'component-load-requested', [itemId], callback),
+        $emit: (editorId, itemId, item) => {
+          EditorEventBus.component.loadRequested.any.$emit(editorId, item);
+          $emit(editorId, 'component-load-requested', [itemId], item);
+        }
+      }
+    },
+    loadFailed: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-component-load-failed', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-component-load-failed', [], callback),
+        $emit: (editorId, item) => $emit(editorId, 'any-component-load-failed', [], item)
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'component-load-failed', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'component-load-failed', [itemId], callback),
+        $emit: (editorId, itemId, item) => {
+          EditorEventBus.component.loadFailed.any.$emit(editorId, item);
+          $emit(editorId, 'component-load-failed', [itemId], item);
+        }
+      }
+    },
+    mounted: {
+      any: {
+        $on: (editorId, callback) => $on(editorId, 'any-component-mounted', [], callback),
+        $off: (editorId, callback) => $off(editorId, 'any-component-mounted', [], callback),
+        $emit: (editorId, item) => $emit(editorId, 'any-component-mounted', [], item)
+      },
+      specific: {
+        $on: (editorId, itemId, callback) => $on(editorId, 'component-mounted', [itemId], callback),
+        $off: (editorId, itemId, callback) => $off(editorId, 'component-mounted', [itemId], callback),
+        $emit: (editorId, itemId, item) => {
+          EditorEventBus.component.mounted.any.$emit(editorId, item);
+          $emit(editorId, 'component-mounted', [itemId], item);
+        }
+      }
+    }
+  },
+  zoomToAreaRequested: {
+    $on: (editorId, callback) => $on(editorId, 'zoom-to-area-requested', [], callback),
+    $off: (editorId, callback) => $off(editorId, 'zoom-to-area-requested', [], callback),
+    $emit: (editorId, area, isAnimated) => $emit(editorId, 'zoom-to-area-requested', [], area, isAnimated)
+  },
+  elementPick: {
+    requested: {
+      $on: (editorId, callback) => $on(editorId, 'element-pick-requested', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'element-pick-requested', [], callback),
+      $emit: (editorId, pickCallback) => $emit(editorId, 'element-pick-requested', [], pickCallback)
+    },
+    canceled: {
+      $on: (editorId, callback) => $on(editorId, 'element-pick-canceled', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'element-pick-canceled', [], callback),
+      $emit: editorId => $emit(editorId, 'element-pick-canceled', [])
+    }
+  },
+  screenTransformUpdated: {
+    $on: (editorId, callback) => $on(editorId, 'screen-transform-updated', [], callback),
+    $off: (editorId, callback) => $off(editorId, 'screen-transform-updated', [], callback),
+    $emit: (editorId, screenTransform) => $emit(editorId, 'screen-transform-updated', [], screenTransform)
+  },
+  itemSurround: {
+    created: {
+      $on: (editorId, callback) => $on(editorId, 'item-surround-created', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'item-surround-created', [], callback),
+      $emit: (editorId, item, boundingBox, padding) => $emit(editorId, 'item-surround-created', [], item, boundingBox, padding)
+    }
+  },
+  behaviorPanel: {
+    requested: {
+      $on: (editorId, callback) => $on(editorId, 'behavior-panel-requested', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'behavior-panel-requested', [], callback),
+      $emit: editorId => $emit(editorId, 'behavior-panel-requested', [])
+    }
+  },
+  editBox: {
+    updated: {
+      $on: (editorId, callback) => $on(editorId, 'edit-box-items-updated', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'edit-box-items-updated', [], callback),
+      $emit: editorId => $emit(editorId, 'edit-box-items-updated', [])
+    }
+  },
+  framePlayer: {
+    prepared: {
+      $on: (editorId, callback) => $on(editorId, 'frame-player-prepared', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'frame-player-prepared', [], callback),
+      $emit: (editorId, framePlayerItem, frameCallbacks) => $emit(editorId, 'frame-player-prepared', [], framePlayerItem, frameCallbacks)
+    }
+  },
+  clickableMarkers: {
+    toggled: {
+      $on: (editorId, callback) => $on(editorId, 'clickable-markers-toggled', [], callback),
+      $off: (editorId, callback) => $off(editorId, 'clickable-markers-toggled', [], callback),
+      $emit: editorId => $emit(editorId, 'clickable-markers-toggled', [])
+    }
+  },
+  editorResized: {
+    $on: (editorId, callback) => $on(editorId, 'editor-resized', [], callback),
+    $off: (editorId, callback) => $off(editorId, 'editor-resized', [], callback),
+    $emit: editorId => $emit(editorId, 'editor-resized', [])
   }
 };
-
-document.addEventListener('keyup', event => {
-  event = event || window.event;
-
-  if (event.target === document.body) {
-    const key = (0,_events__WEBPACK_IMPORTED_MODULE_1__/* .identifyKeyPress */ .W)(event);
-
-    if (key) {
-      event.preventDefault();
-      EventBus.$emit(EventBus.KEY_UP, key, {
-        ctrlCmdPressed: event.metaKey || event.ctrlKey
-      });
-    }
-  }
-});
-document.addEventListener('keydown', event => {
-  event = event || window.event;
-
-  if (event.target === document.body) {
-    const key = (0,_events__WEBPACK_IMPORTED_MODULE_1__/* .identifyKeyPress */ .W)(event);
-
-    if (key) {
-      event.preventDefault();
-      EventBus.$emit(EventBus.KEY_PRESS, key, {
-        ctrlCmdPressed: event.metaKey || event.ctrlKey
-      });
-    }
-  }
-});
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (EventBus);
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (EditorEventBus);
 
 /***/ }),
 
@@ -3926,203 +4022,6 @@ P2 = P1 + V1
 
 /***/ }),
 
-/***/ 125:
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "g": () => (/* binding */ createConnectorCap)
-/* harmony export */ });
-/* unused harmony export getCapTypes */
-/* harmony import */ var lodash_keys__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(3674);
-/* harmony import */ var lodash_keys__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_keys__WEBPACK_IMPORTED_MODULE_0__);
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
-
-function standard(func) {
-  return {
-    hollow: false,
-    renderFunc: func
-  };
-}
-
-function hollow(func) {
-  return {
-    hollow: true,
-    renderFunc: func
-  };
-}
-
-const allCaps = {
-  'empty': null,
-  'triangle': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, true)),
-  'triangle-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, true)),
-  'triangle-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, true)),
-  'arrow': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, false)),
-  'arrow-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, false)),
-  'arrow-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, false)),
-  'triangle-h': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, true)),
-  'triangle-h-1': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, true)),
-  'triangle-h-2': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, true)),
-  'circle': standard((x, y, Vx, Vy) => {
-    const squaredD = Vx * Vx + Vy * Vy;
-
-    if (squaredD > 0.01) {
-      let r = Math.sqrt(squaredD) / 2;
-      const cx = x + Vx / 2;
-      const cy = y + Vy / 2;
-      return {
-        path: ` M ${cx - r}, ${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0`,
-        hollow: false,
-        entryPoint: {
-          x: x + Vx,
-          y: y + Vy
-        }
-      };
-    }
-
-    return null;
-  }),
-  'circle-cross': hollow((x, y, Vx, Vy) => {
-    const squaredD = Vx * Vx + Vy * Vy;
-
-    if (squaredD > 0.01) {
-      let r = Math.sqrt(squaredD) / 2;
-      const cx = x + Vx / 2;
-      const cy = y + Vy / 2;
-      const d = Math.cos(Math.PI / 4) * r;
-      return {
-        path: ` M ${cx - r}, ${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0 z M ${cx - d} ${cy - d} L ${cx + d} ${cy + d}  M ${cx + d} ${cy - d} L ${cx - d} ${cy + d}`,
-        hollow: true,
-        entryPoint: {
-          x: x + Vx,
-          y: y + Vy
-        }
-      };
-    }
-
-    return null;
-  }),
-  'double-arrow': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, false)),
-  'double-arrow-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, false)),
-  'double-arrow-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, false)),
-  'double-triangle': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, true)),
-  'double-triangle-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, true)),
-  'double-triangle-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, true)),
-  'double-triangle-h': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, true)),
-  'double-triangle-h-1': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, true)),
-  'double-triangle-h-2': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, true)),
-  'diamond': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 0.5)),
-  'diamond-1': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1)),
-  'diamond-2': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1.5)),
-  'diamond-h': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 0.5)),
-  'diamond-h-1': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1)),
-  'diamond-h-2': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1.5)),
-  'line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 1)),
-  'double-line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 2)),
-  'tripple-line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 3))
-};
-
-const _capTypes = lodash_keys__WEBPACK_IMPORTED_MODULE_0___default()(allCaps);
-
-function getCapTypes() {
-  return _capTypes;
-}
-function createConnectorCap(x, y, Vx, Vy, capType) {
-  const cap = allCaps[capType];
-
-  if (cap) {
-    const result = cap.renderFunc(x, y, Vx, Vy);
-
-    if (cap.hollow) {
-      result.hollow = true;
-    }
-
-    return result;
-  }
-
-  return null;
-}
-
-function createLineCap(x, y, Vx, Vy, numberOfLines) {
-  let path = '';
-  const Bx = Vy / 2;
-  const By = -Vx / 2;
-
-  for (let i = 0; i < numberOfLines; i++) {
-    const x0 = x + Vx * (i + 1) / (numberOfLines + 1);
-    const y0 = y + Vy * (i + 1) / (numberOfLines + 1);
-    const x1 = x0 + Bx;
-    const y1 = y0 + By;
-    const x2 = x0 - Bx;
-    const y2 = y0 - By;
-    path += `M ${x1} ${y1} L ${x2} ${y2} `;
-  }
-
-  return {
-    path: path,
-    hollow: true,
-    prolongLine: true,
-    entryPoint: {
-      x: x + Vx,
-      y: y + Vy
-    }
-  };
-}
-
-function createArrowCap(x, y, Vx, Vy, numberOfArrows, ratio, close) {
-  let path = '';
-  const Bx = Vy / (2 * ratio);
-  const By = -Vx / (2 * ratio);
-
-  for (let i = 0; i < numberOfArrows; i++) {
-    const x0 = x + Vx * i / numberOfArrows;
-    const y0 = y + Vy * i / numberOfArrows;
-    const x1 = x0 + Vx / numberOfArrows + Bx;
-    const y1 = y0 + Vy / numberOfArrows + By;
-    const x2 = x0 + Vx / numberOfArrows - Bx;
-    const y2 = y0 + Vy / numberOfArrows - By;
-    path += `M ${x1} ${y1} L ${x0} ${y0} L ${x2} ${y2} `;
-
-    if (close) {
-      path += ' z ';
-    }
-  }
-
-  return {
-    path: path,
-    hollow: !close,
-    prolongLine: !close,
-    entryPoint: {
-      x: x + Vx,
-      y: y + Vy
-    }
-  };
-}
-
-function createDiamondCap(x, y, Vx, Vy, ratio) {
-  const Bx = ratio * Vy / 2;
-  const By = -ratio * Vx / 2;
-  const x1 = x + Vx / 2 - Bx;
-  const y1 = y + Vy / 2 - By;
-  const x2 = x + Vx;
-  const y2 = y + Vy;
-  const x3 = x + Vx / 2 + Bx;
-  const y3 = y + Vy / 2 + By;
-  return {
-    path: `M ${x} ${y} L ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y3} z`,
-    hollow: false,
-    entryPoint: {
-      x: x + Vx,
-      y: y + Vy
-    }
-  };
-}
-
-/***/ }),
-
 /***/ 8915:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
@@ -4492,7 +4391,7 @@ function createDiamondCap(x, y, Vx, Vy, ratio) {
 
 const basicShapeGroup = (__webpack_require__(2291)/* ["default"] */ .Z);
 
-let _shapes = [(__webpack_require__(1969)/* ["default"] */ .Z), (__webpack_require__(9831)/* ["default"] */ .Z), (__webpack_require__(8915)/* ["default"] */ .Z), (__webpack_require__(5664)/* ["default"] */ .Z), (__webpack_require__(3057)/* ["default"] */ .Z), (__webpack_require__(7533)/* ["default"] */ .Z), (__webpack_require__(6942)/* ["default"] */ .Z), (__webpack_require__(2709)/* ["default"] */ .Z), (__webpack_require__(1008)/* ["default"] */ .Z), (__webpack_require__(7025)/* ["default"] */ .Z), (__webpack_require__(9758)/* ["default"] */ .Z), (__webpack_require__(8148)/* ["default"] */ .Z), (__webpack_require__(3942)/* ["default"] */ .Z), (__webpack_require__(4310)/* ["default"] */ .Z), (__webpack_require__(2270)/* ["default"] */ .Z), (__webpack_require__(5198)/* ["default"] */ .Z), (__webpack_require__(2584)/* ["default"] */ .Z), (__webpack_require__(332)/* ["default"] */ .ZP), (__webpack_require__(8733)/* ["default"] */ .Z), (__webpack_require__(9078)/* ["default"] */ .Z), (__webpack_require__(1533)/* ["default"] */ .Z), (__webpack_require__(5845)/* ["default"] */ .Z), (__webpack_require__(5906)/* ["default"] */ .Z), (__webpack_require__(9699)/* ["default"] */ .Z), (__webpack_require__(3652)/* ["default"] */ .Z), (__webpack_require__(9880)/* ["default"] */ .Z), (__webpack_require__(4437)/* ["default"] */ .Z), (__webpack_require__(2517)/* ["default"] */ .Z), (__webpack_require__(4387)/* ["default"] */ .Z), (__webpack_require__(4358)/* ["default"] */ .Z), (__webpack_require__(7569)/* ["default"] */ .Z), (__webpack_require__(6852)/* ["default"] */ .Z), (__webpack_require__(7153)/* ["default"] */ .Z), (__webpack_require__(8396)/* ["default"] */ .Z), (__webpack_require__(3486)/* ["default"] */ .Z), (__webpack_require__(1693)/* ["default"] */ .Z), (__webpack_require__(958)/* ["default"] */ .Z), (__webpack_require__(5576)/* ["default"] */ .Z)];
+let _shapes = [(__webpack_require__(1969)/* ["default"] */ .Z), (__webpack_require__(9831)/* ["default"] */ .Z), (__webpack_require__(8915)/* ["default"] */ .Z), (__webpack_require__(5664)/* ["default"] */ .Z), (__webpack_require__(3057)/* ["default"] */ .Z), (__webpack_require__(5357)/* ["default"] */ .Z), (__webpack_require__(6942)/* ["default"] */ .Z), (__webpack_require__(2709)/* ["default"] */ .Z), (__webpack_require__(1008)/* ["default"] */ .Z), (__webpack_require__(7025)/* ["default"] */ .Z), (__webpack_require__(9758)/* ["default"] */ .Z), (__webpack_require__(8148)/* ["default"] */ .Z), (__webpack_require__(3942)/* ["default"] */ .Z), (__webpack_require__(4310)/* ["default"] */ .Z), (__webpack_require__(2270)/* ["default"] */ .Z), (__webpack_require__(5198)/* ["default"] */ .Z), (__webpack_require__(2584)/* ["default"] */ .Z), (__webpack_require__(332)/* ["default"] */ .ZP), (__webpack_require__(14)/* ["default"] */ .Z), (__webpack_require__(8733)/* ["default"] */ .Z), (__webpack_require__(9078)/* ["default"] */ .Z), (__webpack_require__(1533)/* ["default"] */ .Z), (__webpack_require__(5845)/* ["default"] */ .Z), (__webpack_require__(5906)/* ["default"] */ .Z), (__webpack_require__(9699)/* ["default"] */ .Z), (__webpack_require__(3652)/* ["default"] */ .Z), (__webpack_require__(9880)/* ["default"] */ .Z), (__webpack_require__(4437)/* ["default"] */ .Z), (__webpack_require__(2517)/* ["default"] */ .Z), (__webpack_require__(4387)/* ["default"] */ .Z), (__webpack_require__(4358)/* ["default"] */ .Z), (__webpack_require__(7569)/* ["default"] */ .Z), (__webpack_require__(6852)/* ["default"] */ .Z), (__webpack_require__(7153)/* ["default"] */ .Z), (__webpack_require__(8396)/* ["default"] */ .Z), (__webpack_require__(3486)/* ["default"] */ .Z), (__webpack_require__(1693)/* ["default"] */ .Z), (__webpack_require__(958)/* ["default"] */ .Z), (__webpack_require__(5576)/* ["default"] */ .Z)];
 _shapes = _shapes.concat(basicShapeGroup.shapes);
 
 function defaultGetEventsFunc(item) {
@@ -4502,7 +4401,6 @@ function defaultGetEventsFunc(item) {
 const defaultEditorProps = {
   description: 'rich',
   onlyEditMode: false,
-  ignoreEventLayer: false,
   customTextRendering: false
 };
 const standardShapeProps = {
@@ -4636,10 +4534,15 @@ function enrichShape(shapeComponent, shapeName) {
       beforeCreate: shapeConfig.beforeCreate,
       mounted: shapeConfig.mounted
     },
+    fixItem: shapeConfig.fixItem,
     // used for generating item snapers which are used for snapping dragged item to other items
     getSnappers: shapeConfig.getSnappers || defaultGetSnappers,
     vueComponent: shapeConfig.shapeType === 'vue' ? shapeComponent : null,
     menuItems: shapeConfig.menuItems || [],
+    onMouseDown: shapeConfig.onMouseDown,
+    onMouseMove: shapeConfig.onMouseMove,
+    onMouseOut: shapeConfig.onMouseOut,
+    computeCustomAreas: shapeConfig.computeCustomAreas,
 
     argType(argName) {
       if (this.args && this.args[argName]) {
@@ -4790,12 +4693,11 @@ function getStandardRectPins(item) {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "BM": () => (/* binding */ convertStandardCurveShape),
 /* harmony export */   "FI": () => (/* binding */ computeCurvePath),
-/* harmony export */   "Vk": () => (/* binding */ convertCurvePointToRelative),
-/* harmony export */   "oJ": () => (/* binding */ convertCurvePointToItemScale),
-/* harmony export */   "BM": () => (/* binding */ convertStandardCurveShape)
+/* harmony export */   "Vk": () => (/* binding */ convertCurvePointToRelative)
 /* harmony export */ });
-/* unused harmony exports PATH_POINT_CONVERSION_SCALE, convertRawShapeForRender */
+/* unused harmony exports PATH_POINT_CONVERSION_SCALE, convertCurvePointToItemScale, convertRawShapeForRender */
 /* harmony import */ var lodash_map__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(5161);
 /* harmony import */ var lodash_map__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_map__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(4486);
@@ -5821,7 +5723,8 @@ function calculateSectionLineTop(item, nameLineTop) {
       item: {
         textSlots: {
           title: {
-            text: '<b>Class</b>',
+            text: 'Class',
+            bold: true,
             fontSize: 16,
             halign: 'center',
             valign: 'middle',
@@ -6442,7 +6345,8 @@ function computePath(item) {
       item: {
         textSlots: {
           title: {
-            text: '<b>Module</b>',
+            text: 'Module',
+            bold: true,
             halign: 'center'
           },
           body: {
@@ -6770,7 +6674,8 @@ function computeOutline(item) {
       item: {
         textSlots: {
           title: {
-            text: '<b>Object</b>',
+            text: 'Object',
+            bold: true,
             fontSize: 16,
             halign: 'center',
             valign: 'middle',
@@ -7592,7 +7497,8 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
 
     if (!item.textSlots[`col${columns}`]) {
       item.textSlots[`col${columns}`] = {
-        text: `<b>Title ${columns}</b>`
+        text: `Title ${columns}`,
+        bold: true
       };
       (0,_scheme_ItemFixer__WEBPACK_IMPORTED_MODULE_2__/* .enrichItemTextSlotWithDefaults */ .q4)(item.textSlots[`col${columns}`]);
     }
@@ -7620,7 +7526,7 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
     shapeType: 'standard',
     id: 'uml_swim_lane',
     menuItems: [{
-      group: 'UML',
+      group: 'Tables',
       name: 'Swim Lane',
       iconUrl: '/assets/images/items/uml-swim-lane.svg',
       item: {
@@ -7632,13 +7538,16 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
         },
         textSlots: {
           col1: {
-            text: '<b>Todo</b>'
+            text: 'Todo',
+            bold: true
           },
           col2: {
-            text: '<b>In Progress</b>'
+            text: 'In Progress',
+            bold: true
           },
           col3: {
-            text: '<b>Done</b>'
+            text: 'Done',
+            bold: true
           }
         }
       },
@@ -7653,7 +7562,7 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
         h: 400
       }
     }, {
-      group: 'UML',
+      group: 'Tables',
       name: 'Swim Lane (Horizontal)',
       iconUrl: '/assets/images/items/uml-swim-lane-horizontal.svg',
       item: {
@@ -7667,13 +7576,16 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
         },
         textSlots: {
           col1: {
-            text: '<b>Todo</b>'
+            text: 'Todo',
+            bold: true
           },
           col2: {
-            text: '<b>In Progress</b>'
+            text: 'In Progress',
+            bold: true
           },
           col3: {
-            text: '<b>Done</b>'
+            text: 'Done',
+            bold: true
           }
         }
       },
@@ -7702,6 +7614,9 @@ function onColumnNumberUpdate($store, item, columns, previousColumns) {
       }
     },
 
+    editorProps: {
+      textSlotTabsDisabled: true
+    },
     controlPoints: {
       make(item) {
         const cps = {};
@@ -7915,82 +7830,12 @@ function generateTextStyle(textSlot) {
     'display': 'table-cell',
     'box-sizing': 'border-box'
   };
+
+  if (textSlot.bold) {
+    style['font-weight'] = 'bold';
+  }
+
   return style;
-}
-
-/***/ }),
-
-/***/ 8442:
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "R": () => (/* binding */ Keys),
-/* harmony export */   "W": () => (/* binding */ identifyKeyPress)
-/* harmony export */ });
-/* harmony import */ var lodash_findKey__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(894);
-/* harmony import */ var lodash_findKey__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_findKey__WEBPACK_IMPORTED_MODULE_0__);
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
-const Keys = {
-  ESCAPE: 'escape',
-  DELETE: 'delete',
-  CTRL_A: 'ctrl-a',
-  CTRL_C: 'ctrl-c',
-  CTRL_V: 'ctrl-v',
-  CTRL_S: 'ctrl-s',
-  CTRL_Z: 'ctrl-z',
-  CTRL_SHIFT_Z: 'ctrl-shift-z',
-  UP: 'up',
-  DOWN: 'down',
-  LEFT: 'left',
-  RIGHT: 'right',
-  SPACE: 'space',
-  MINUS: 'minus',
-  EQUALS: 'equals'
-};
-const keyMap = {};
-
-keyMap[Keys.ESCAPE] = event => event.key === 'Escape' || event.key === 'Esc' || event.keyCode === 27;
-
-keyMap[Keys.DELETE] = event => event.key === 'Backspace' || event.key === 'Delete' || event.keyCode === 8 || event.keyCode === 127;
-
-keyMap[Keys.CTRL_A] = event => event.key === 'a' && (event.metaKey || event.ctrlKey);
-
-keyMap[Keys.CTRL_C] = event => event.key === 'c' && (event.metaKey || event.ctrlKey);
-
-keyMap[Keys.CTRL_V] = event => event.key === 'v' && (event.metaKey || event.ctrlKey);
-
-keyMap[Keys.CTRL_S] = event => event.key === 's' && (event.metaKey || event.ctrlKey);
-
-keyMap[Keys.CTRL_Z] = event => event.key === 'z' && (event.metaKey || event.ctrlKey) && !event.shiftKey;
-
-keyMap[Keys.CTRL_SHIFT_Z] = event => event.key === 'z' && (event.metaKey || event.ctrlKey) && event.shiftKey;
-
-keyMap[Keys.LEFT] = event => event.key === 'ArrowLeft';
-
-keyMap[Keys.RIGHT] = event => event.key === 'ArrowRight';
-
-keyMap[Keys.UP] = event => event.key === 'ArrowUp';
-
-keyMap[Keys.DOWN] = event => event.key === 'ArrowDown';
-
-keyMap[Keys.SPACE] = event => event.key === ' ' || event.keyCode === 32;
-
-keyMap[Keys.MINUS] = event => event.key === '-' || event.keyCode === 189;
-
-keyMap[Keys.EQUALS] = event => event.key === '=' || event.keyCode === 187;
-/**
- * 
- * @param {MouseEvent} event 
- * @returns {String} id of event which is available in Keys object
- */
-
-
-function identifyKeyPress(event) {
-  return lodash_findKey__WEBPACK_IMPORTED_MODULE_0___default()(keyMap, (check, keyName) => check(event));
 }
 
 /***/ }),
@@ -8003,7 +7848,7 @@ function identifyKeyPress(event) {
 /* harmony export */   "Yd": () => (/* binding */ Logger),
 /* harmony export */   "qc": () => (/* binding */ Debugger)
 /* harmony export */ });
-/* unused harmony exports LogConfig, registerDebuggerInitiation */
+/* unused harmony exports LogConfig, MobileDebugger, registerDebuggerInitiation */
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_0__);
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -8220,6 +8065,37 @@ function registerDebuggerInitiation(callback) {
   debuggerInitiationCallback = callback;
 }
 
+const logEntries = [];
+const MobileDebugger = {
+  log(...args) {
+    this.write('info', args);
+  },
+
+  error(...args) {
+    this.write('error', args);
+  },
+
+  write(level, ...args) {
+    if (logEntries.length > 1000) {
+      logEntries.shift();
+    }
+
+    let text = '';
+    args.forEach((arg, i) => {
+      const prefix = i === 0 ? '' : ' ';
+      text += prefix + arg;
+    });
+    logEntries.push({
+      level,
+      text
+    });
+  },
+
+  getLogEntries() {
+    return logEntries;
+  }
+
+};
 
 
 /***/ }),
@@ -9201,9 +9077,9 @@ function _simplifyPathPointsUsingRDP(points, epsilon, idxStart, idxEnd) {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "vq": () => (/* binding */ getDefaultFont),
 /* harmony export */   "It": () => (/* binding */ getFontFamilyFor),
-/* harmony export */   "_W": () => (/* binding */ getAllFonts)
+/* harmony export */   "_W": () => (/* binding */ getAllFonts),
+/* harmony export */   "vq": () => (/* binding */ getDefaultFont)
 /* harmony export */ });
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -9280,13 +9156,13 @@ function getAllFonts() {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "pp": () => (/* binding */ ItemInteractionMode),
-/* harmony export */   "td": () => (/* binding */ defaultTextSlotProps),
 /* harmony export */   "$9": () => (/* binding */ STANDARD_SHAPE_PROPS),
-/* harmony export */   "kT": () => (/* binding */ defaultItemDefinition),
-/* harmony export */   "XZ": () => (/* binding */ defaultItem),
 /* harmony export */   "Hp": () => (/* binding */ traverseItems),
 /* harmony export */   "U3": () => (/* binding */ hasItemDescription),
+/* harmony export */   "XZ": () => (/* binding */ defaultItem),
+/* harmony export */   "kT": () => (/* binding */ defaultItemDefinition),
+/* harmony export */   "pp": () => (/* binding */ ItemInteractionMode),
+/* harmony export */   "td": () => (/* binding */ defaultTextSlotProps),
 /* harmony export */   "u2": () => (/* binding */ getItemPropertyDescriptionForShape)
 /* harmony export */ });
 /* unused harmony exports textWhiteSpaceOptions, textSlotProperties, prettyTextSlotProperty, coreItemPropertyTypes, defaultifyItem, applyStyleFromAnotherItem */
@@ -9337,6 +9213,10 @@ const textSlotProperties = [{
   field: 'color',
   name: 'Color',
   type: 'color'
+}, {
+  field: 'bold',
+  name: 'Bold',
+  type: 'boolean'
 }, {
   field: 'halign',
   name: 'Horizontal Align',
@@ -9517,20 +9397,22 @@ function defaultifyItem(item) {
 
   return resultedItem;
 }
-function traverseItems(rootItem, callback) {
-  callback(rootItem);
-
-  if (rootItem.childItems) {
-    lodash_forEach__WEBPACK_IMPORTED_MODULE_3___default()(rootItem.childItems, item => {
-      traverseItems(item, callback);
-    });
+function traverseItems(items, callback) {
+  if (!Array.isArray(items)) {
+    return;
   }
 
-  if (rootItem._childItems) {
-    lodash_forEach__WEBPACK_IMPORTED_MODULE_3___default()(rootItem._childItems, item => {
-      traverseItems(item, callback);
-    });
-  }
+  items.forEach(item => {
+    callback(item);
+
+    if (item.childItems) {
+      traverseItems(item.childItems, callback);
+    }
+
+    if (item._childItems) {
+      traverseItems(item._childItems, callback);
+    }
+  });
 }
 /**
  *
@@ -9630,8 +9512,8 @@ function getItemPropertyDescriptionForShape(shape, propertyPath) {
 
 "use strict";
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "z9": () => (/* binding */ enrichItemWithDefaults),
-/* harmony export */   "q4": () => (/* binding */ enrichItemTextSlotWithDefaults)
+/* harmony export */   "q4": () => (/* binding */ enrichItemTextSlotWithDefaults),
+/* harmony export */   "z9": () => (/* binding */ enrichItemWithDefaults)
 /* harmony export */ });
 /* unused harmony export enrichItemWithDefaultShapeProps */
 /* harmony import */ var _Item__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(7196);
@@ -9640,7 +9522,7 @@ function getItemPropertyDescriptionForShape(shape, propertyPath) {
 /* harmony import */ var shortid__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(shortid__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var _defaultify__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(2643);
 /* harmony import */ var _components_editor_items_shapes_StandardCurves_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(8270);
-/* harmony import */ var _userevents_functions_Functions_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(3013);
+/* harmony import */ var _userevents_functions_Functions_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(3605);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_6___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_6__);
 /* harmony import */ var _utils__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(4691);
@@ -9671,6 +9553,11 @@ function enrichItemWithStandardShapeProps(item) {
 
 function fixAndEnrichBehaviorAction(action) {
   idFixer(action);
+
+  if (!action.hasOwnProperty('on')) {
+    action.on = true;
+  }
+
   const func = _userevents_functions_Functions_js__WEBPACK_IMPORTED_MODULE_5__/* ["default"].main */ .Z.main[action.method];
 
   if (!func) {
@@ -9796,6 +9683,10 @@ function enrichItemWithDefaults(item) {
 
   if (shape.shapeType === 'standard') {
     enrichItemWithStandardShapeProps(item);
+  }
+
+  if (shape.fixItem) {
+    shape.fixItem(item);
   } // Some getTextSlots functions in some shapes rely on specific fields in shapeProps
   // that is why it is important to enrich all shapeProps before we call getTextSlots function
 
@@ -9845,13 +9736,14 @@ function enrichItemWithDefaultShapeProps(item) {
 __webpack_require__.d(__webpack_exports__, {
   "ZP": () => (/* binding */ scheme_SchemeContainer),
   "aR": () => (/* binding */ itemCompleteTransform),
+  "N5": () => (/* binding */ localPointOnItem),
   "Ym": () => (/* binding */ relativePointForItem),
   "rs": () => (/* binding */ worldPointOnItem),
   "pD": () => (/* binding */ worldScalingVectorOnItem),
   "uI": () => (/* binding */ worldVectorOnItem)
 });
 
-// UNUSED EXPORTS: DEFAULT_ITEM_MODIFICATION_CONTEXT, ITEM_MODIFICATION_CONTEXT_RESIZED, ITEM_MODIFICATION_CONTEXT_ROTATED, localPointOnItem, localPointOnItemToLocalPointOnOtherItem, worldAngleOfItem
+// UNUSED EXPORTS: DEFAULT_ITEM_MODIFICATION_CONTEXT, ITEM_MODIFICATION_CONTEXT_RESIZED, ITEM_MODIFICATION_CONTEXT_ROTATED, getBoundingBoxOfItems, getLocalBoundingBoxOfItems, localPointOnItemToLocalPointOnOtherItem, worldAngleOfItem
 
 // EXTERNAL MODULE: ./node_modules/lodash/map.js
 var lodash_map = __webpack_require__(5161);
@@ -10094,10 +9986,8 @@ function prepareSchemeForSaving(scheme) {
 }
 // EXTERNAL MODULE: ./src/ui/logger.js
 var logger = __webpack_require__(2017);
-// EXTERNAL MODULE: ./src/ui/userevents/functions/Functions.js + 32 modules
-var Functions = __webpack_require__(3013);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
+// EXTERNAL MODULE: ./src/ui/userevents/functions/Functions.js + 33 modules
+var Functions = __webpack_require__(3605);
 // EXTERNAL MODULE: ./src/ui/animations/ValueAnimation.js
 var ValueAnimation = __webpack_require__(3805);
 // EXTERNAL MODULE: ./src/ui/colors.js
@@ -10126,6 +10016,8 @@ var MoveAlongPathAnimationFunction = __webpack_require__(3277);
 /* harmony default export */ const AnimationFunctions = ({
   moveAlongPath: MoveAlongPathAnimationFunction/* default */.Z
 });
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./src/ui/animations/FrameAnimation.js
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10174,8 +10066,8 @@ const knownSchemeProperties = new Map([['style.backgroundColor', {
 }]]);
 /**
  * Finds supported scheme property descriptor for specified path
- * @param {String} propertyPath 
- * @returns 
+ * @param {String} propertyPath
+ * @returns
  */
 
 function findSchemePropertyDescriptor(propertyPath) {
@@ -10183,9 +10075,9 @@ function findSchemePropertyDescriptor(propertyPath) {
 }
 /**
  * Find a property descriptor for specified property path. In case the type is not supported for animations it returns null
- * @param {Item} item 
- * @param {String} propertyPath 
- * @returns 
+ * @param {Item} item
+ * @param {String} propertyPath
+ * @returns
  */
 
 function findItemPropertyDescriptor(item, propertyPath) {
@@ -10317,7 +10209,7 @@ function interpolateFrameValues(frameNum, prevFrame, nextFrame, propertyType) {
   return prevFrame.value;
 }
 
-function creatObjectFrameAnimation(obj, propertyPath, propertyDescriptor, frames, totalFrames, isItem) {
+function creatObjectFrameAnimation(editorId, obj, propertyPath, propertyDescriptor, frames, totalFrames, isItem) {
   if (!propertyDescriptor) {
     return null;
   }
@@ -10364,7 +10256,7 @@ function creatObjectFrameAnimation(obj, propertyPath, propertyDescriptor, frames
       ui_utils/* default.setObjectProperty */.Z.setObjectProperty(obj, fields, value);
 
       if (isItem) {
-        EventBus/* default.emitItemChanged */.Z.emitItemChanged(obj.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, obj.id);
       }
     }
 
@@ -10479,7 +10371,7 @@ function compileAnimations(framePlayer, schemeContainer) {
 
       if (item) {
         const propertyDescriptor = findItemPropertyDescriptor(item, animation.property);
-        const itemAnimation = creatObjectFrameAnimation(item, animation.property, propertyDescriptor, animation.frames, framePlayer.shapeProps.totalFrames, true);
+        const itemAnimation = creatObjectFrameAnimation(schemeContainer.editorId, item, animation.property, propertyDescriptor, animation.frames, framePlayer.shapeProps.totalFrames, true);
 
         if (itemAnimation) {
           animations.push(itemAnimation);
@@ -10493,7 +10385,7 @@ function compileAnimations(framePlayer, schemeContainer) {
       functionAnimationTracks[animation.id][animation.property] = animation;
     } else if (animation.kind === 'scheme') {
       const propertyDescriptor = findSchemePropertyDescriptor(animation.property);
-      const schemeAnimation = creatObjectFrameAnimation(schemeContainer.scheme, animation.property, propertyDescriptor, animation.frames, framePlayer.shapeProps.totalFrames, false);
+      const schemeAnimation = creatObjectFrameAnimation(schemeContainer.editorId, schemeContainer.scheme, animation.property, propertyDescriptor, animation.frames, framePlayer.shapeProps.totalFrames, false);
 
       if (schemeAnimation) {
         animations.push(schemeAnimation);
@@ -10622,6 +10514,7 @@ function _defineProperty(obj, key, value) { if (key in obj) { Object.definePrope
 
 
 
+
 const log = new logger/* Logger */.Yd('SchemeContainer'); // for now putting it here until I figure out a more elegant way of indexing item outline points
 // There is a problem when the items are scaled too litle and when user zooms in to that downscaled item
 // In that case it would not be able to find points in the quad tree as the generated points are too sparse
@@ -10667,6 +10560,114 @@ function worldVectorOnItem(x, y, item) {
     x: p1.x - p0.x,
     y: p1.y - p0.y
   };
+}
+function getLocalBoundingBoxOfItems(items) {
+  if (!items || items.length === 0) {
+    return {
+      x: 0,
+      y: 0,
+      w: 0,
+      h: 0
+    };
+  }
+
+  let range = null;
+  forEach_default()(items, item => {
+    const points = [{
+      x: item.area.x,
+      y: item.area.y
+    }, {
+      x: item.area.x + item.area.w,
+      y: item.area.y
+    }, {
+      x: item.area.x + item.area.w,
+      y: item.area.y + item.area.h
+    }, {
+      x: item.area.x,
+      y: item.area.y + item.area.h
+    }];
+    forEach_default()(points, point => {
+      if (!range) {
+        range = {
+          x1: point.x,
+          x2: point.x,
+          y1: point.y,
+          y2: point.y
+        };
+      } else {
+        if (range.x1 > point.x) {
+          range.x1 = point.x;
+        }
+
+        if (range.x2 < point.x) {
+          range.x2 = point.x;
+        }
+
+        if (range.y1 > point.y) {
+          range.y1 = point.y;
+        }
+
+        if (range.y2 < point.y) {
+          range.y2 = point.y;
+        }
+      }
+    });
+  });
+  const schemeBoundaryBox = {
+    x: range.x1,
+    y: range.y1,
+    w: range.x2 - range.x1,
+    h: range.y2 - range.y1
+  };
+  return schemeBoundaryBox;
+}
+function getBoundingBoxOfItems(items) {
+  if (!items || items.length === 0) {
+    return {
+      x: 0,
+      y: 0,
+      w: 0,
+      h: 0
+    };
+  }
+
+  let range = null;
+  forEach_default()(items, item => {
+    const points = [worldPointOnItem(0, 0, item), worldPointOnItem(item.area.w, 0, item), worldPointOnItem(item.area.w, item.area.h, item), worldPointOnItem(0, item.area.h, item)];
+    forEach_default()(points, point => {
+      if (!range) {
+        range = {
+          x1: point.x,
+          x2: point.x,
+          y1: point.y,
+          y2: point.y
+        };
+      } else {
+        if (range.x1 > point.x) {
+          range.x1 = point.x;
+        }
+
+        if (range.x2 < point.x) {
+          range.x2 = point.x;
+        }
+
+        if (range.y1 > point.y) {
+          range.y1 = point.y;
+        }
+
+        if (range.y2 < point.y) {
+          range.y2 = point.y;
+        }
+      }
+    });
+  });
+  const schemeBoundaryBox = {
+    x: range.x1,
+    y: range.y1,
+    w: range.x2 - range.x1,
+    h: range.y2 - range.y1
+  };
+  return schemeBoundaryBox;
 }
 /**
  * converts worlds coords to local point in the transform of the parent of the item
@@ -10801,10 +10802,11 @@ class SchemeContainer {
   /**
    *
    * @param {Scheme} scheme
-   * @param {EventBus} eventBus
    */
-  constructor(scheme, eventBus) {
+  constructor(scheme, editorId, listener) {
     logger/* Debugger.register */.qc.register('SchemioContainer', this);
+    this.editorId = editorId;
+    this.listener = listener;
     this.scheme = scheme;
     this.screenTransform = {
       x: 0,
@@ -10818,8 +10820,7 @@ class SchemeContainer {
       y1: -1000000,
       x2: 1000000,
       y2: 1000000
-    };
-    this.eventBus = eventBus; // contains an array of items that were selected
+    }; // contains an array of items that were selected
 
     this.selectedItems = []; // used to quick access to item selection state
 
@@ -10971,7 +10972,7 @@ class SchemeContainer {
         });
 
         this.attachItemsToComponentItem(item, [rootItem]);
-        this.eventBus.emitItemChanged(item.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id);
       }
     }
   }
@@ -11013,6 +11014,77 @@ class SchemeContainer {
       visitComponent(componentItem);
     });
   }
+  /*
+      Traverses all items and makes their tags and tag selectors unique.
+      This is needed so that behavior actions defined inside components affects only items within itself
+  */
+
+
+  isolateItemTags(items) {
+    const tagConversions = new Map();
+    (0,Item/* traverseItems */.Hp)(items, item => {
+      if (!Array.isArray(item.tags)) {
+        return;
+      }
+
+      item.tags = item.tags.map(tag => {
+        if (tagConversions.has(tag)) {
+          return tagConversions.get(tag);
+        }
+
+        const convertedTag = `${tag}-${shortid_default().generate()}`;
+        tagConversions.set(tag, convertedTag);
+        return convertedTag;
+      });
+    });
+
+    const replaceSelector = selector => {
+      if (!selector) {
+        return selector;
+      }
+
+      const colonIndex = selector.indexOf(':');
+
+      if (colonIndex > 0) {
+        const expression = selector.substring(0, colonIndex).trim();
+
+        if (expression === 'tag') {
+          const tag = selector.substr(colonIndex + 1).trim();
+
+          if (tagConversions.has(tag)) {
+            return `tag: ${tagConversions.get(tag)}`;
+          }
+        }
+      }
+
+      return selector;
+    };
+
+    (0,Item/* traverseItems */.Hp)(items, item => {
+      if (!item.behavior || !Array.isArray(item.behavior.events)) {
+        return;
+      }
+
+      item.behavior.events.forEach(event => {
+        if (!Array.isArray(event.actions)) {
+          return;
+        }
+
+        event.actions.forEach(action => {
+          action.element = replaceSelector(action.element);
+
+          if (action.args && Functions/* default.main.hasOwnProperty */.Z.main.hasOwnProperty(action.method)) {
+            const argDefs = Functions/* default.main */.Z.main[action.method].args;
+            forEach_default()(argDefs, (argDef, argName) => {
+              if (argDef.type === 'element') {
+                action.args[argName] = replaceSelector(action.args[argName]);
+              }
+            });
+          }
+        });
+      });
+    });
+  }
 
   attachItemsToComponentItem(componentItem, referenceItems) {
     if (!referenceItems) {
@@ -11022,7 +11094,12 @@ class SchemeContainer {
     const preserveOriginalNames = true;
     const shouldIndexClones = true;
     const childItems = this.cloneItems(referenceItems, preserveOriginalNames, shouldIndexClones);
-    const bBox = this.getBoundingBoxOfItems(referenceItems);
+
+    if (componentItem.shapeProps.kind === 'external') {
+      this.isolateItemTags(childItems);
+    }
+
+    const bBox = getLocalBoundingBoxOfItems(referenceItems);
     forEach_default()(childItems, item => {
       item.area.x -= bBox.x;
       item.area.y -= bBox.y; // resetting the visiblity of component root items
@@ -11053,6 +11130,17 @@ class SchemeContainer {
       dy = (componentItem.area.h - h * sy) / 2;
     }
 
+    const overlayRect = createDefaultRectItem();
+    overlayRect.id = shortid_default().generate();
+    overlayRect.area.x = 0;
+    overlayRect.area.y = 0;
+    overlayRect.area.w = componentItem.area.w;
+    overlayRect.area.h = componentItem.area.h;
+    overlayRect.selfOpacity = 0;
+    overlayRect.meta = {
+      isComponentContainer: true
+    };
+    overlayRect.name = 'Overlay container';
     const rectItem = createDefaultRectItem();
     rectItem.shape = 'dummy';
     rectItem.selfOpacity = 0;
@@ -11060,6 +11148,7 @@ class SchemeContainer {
     rectItem.meta = {
       isComponentContainer: true
     };
+    rectItem.name = 'Scaled container';
     rectItem.area.x = dx;
     rectItem.area.y = dy;
     rectItem.area.w = w;
@@ -11069,16 +11158,17 @@ class SchemeContainer {
     rectItem.area.sx = sx;
     rectItem.area.sy = sy;
     rectItem._childItems = childItems;
+    overlayRect._childItems = [rectItem];
 
     if (componentItem.shapeProps.kind === 'external') {
-      const backButton = (0,Component/* generateComponentGoBackButton */.Si)(componentItem, rectItem.area, this.screenTransform);
+      const backButton = (0,Component/* generateComponentGoBackButton */.Si)(componentItem, overlayRect, this.screenTransform, this.screenSettings.width, this.screenSettings.height);
 
       if (backButton) {
-        rectItem._childItems.push(backButton);
+        overlayRect._childItems.push(backButton);
       }
     }
 
-    componentItem._childItems = [rectItem];
+    componentItem._childItems = [overlayRect];
     const itemTransform = myMath/* default.standardTransformWithArea */.Z.standardTransformWithArea(componentItem.meta.transformMatrix, componentItem.area);
     const nonIndexable = false;
     this.reindexSpecifiedItems(componentItem._childItems, itemTransform, componentItem, componentItem.meta.ancestorIds.concat([componentItem.id]), nonIndexable);
@@ -11104,7 +11194,7 @@ class SchemeContainer {
       }
     });
 
-    const bBox = this.getBoundingBoxOfItems(referenceItems);
+    const bBox = getBoundingBoxOfItems(referenceItems);
     let scale = 1.0,
         dx = 0,
         dy = 0;
@@ -11703,52 +11793,7 @@ class SchemeContainer {
   }
 
   getBoundingBoxOfItems(items) {
-    if (!items || items.length === 0) {
-      return {
-        x: 0,
-        y: 0,
-        w: 0,
-        h: 0
-      };
-    }
-
-    let range = null;
-    forEach_default()(items, item => {
-      const points = [this.worldPointOnItem(0, 0, item), this.worldPointOnItem(item.area.w, 0, item), this.worldPointOnItem(item.area.w, item.area.h, item), this.worldPointOnItem(0, item.area.h, item)];
-      forEach_default()(points, point => {
-        if (!range) {
-          range = {
-            x1: point.x,
-            x2: point.x,
-            y1: point.y,
-            y2: point.y
-          };
-        } else {
-          if (range.x1 > point.x) {
-            range.x1 = point.x;
-          }
-
-          if (range.x2 < point.x) {
-            range.x2 = point.x;
-          }
-
-          if (range.y1 > point.y) {
-            range.y1 = point.y;
-          }
-
-          if (range.y2 < point.y) {
-            range.y2 = point.y;
-          }
-        }
-      });
-    });
-    const schemeBoundaryBox = {
-      x: range.x1,
-      y: range.y1,
-      w: range.x2 - range.x1,
-      h: range.y2 - range.y1
-    };
-    return schemeBoundaryBox;
+    return getBoundingBoxOfItems(items);
   }
   /**
    * This function recursively goes into all items descendants and readjusts them
@@ -11834,11 +11879,7 @@ class SchemeContainer {
     if (shape && shape.readjustItem) {
       shape.readjustItem(item, this, isSoft, context, precision);
       updateItemRevision(item);
-
-      if (this.eventBus) {
-        this.eventBus.emitItemChanged(item.id);
-      }
-
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id);
       this.svgOutlinePathCache.forceUpdate(item);
     } // searching for items that depend on changed item
 
@@ -11973,18 +12014,15 @@ class SchemeContainer {
       item.area.y = newLocalPoint.y;
     }
 
-    if (this.eventBus) {
-      if (previousParentId) {
-        this.eventBus.emitItemChanged(previousParentId);
-      }
-
-      if (newParentId) {
-        this.eventBus.emitItemChanged(newParentId);
-      }
-
-      this.eventBus.emitSchemeChangeCommited();
+    if (previousParentId) {
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, previousParentId);
     }
 
+    if (newParentId) {
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, newParentId);
+    }
+
+    this.listener.onSchemeChangeCommitted(this.editorId);
     this.reindexItems();
     this.updateMultiItemEditBox();
   }
@@ -12184,7 +12222,7 @@ class SchemeContainer {
     itemsArray.splice(index, 1);
 
     if (parentItem) {
-      this.eventBus.emitItemChanged(parentItem.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, parentItem.id);
     }
   }
 
@@ -12219,7 +12257,7 @@ class SchemeContainer {
       this.multiItemEditBox = null;
       this.reindexItems(); // This event is needed to inform some components that they need to update their state because selection has dissapeared
 
-      if (this.eventBus) this.eventBus.emitAnyItemDeselected();
+      EditorEventBus/* default.item.deselected.any.$emit */.Z.item.deselected.any.$emit(this.editorId);
     }
   }
 
@@ -12289,7 +12327,7 @@ class SchemeContainer {
     if (inclusive) {
       this.selectItemInclusive(item);
       this.selectedItemsMap[item.id] = true;
-      if (this.eventBus) this.eventBus.emitItemSelected(item.id);
+      EditorEventBus/* default.item.selected.specific.$emit */.Z.item.selected.specific.$emit(this.editorId, item.id);
     } else {
       const deselectedItemIds = [];
       forEach_default()(this.selectedItems, selectedItem => {
@@ -12300,10 +12338,10 @@ class SchemeContainer {
       this.selectedItems = [];
       forEach_default()(deselectedItemIds, itemId => {
         this.selectedItemsMap[itemId] = false;
-        if (this.eventBus) this.eventBus.emitItemDeselected(itemId);
+        EditorEventBus/* default.item.deselected.specific.$emit */.Z.item.deselected.specific.$emit(this.editorId, itemId);
       });
       this.selectItemInclusive(item);
-      if (this.eventBus) this.eventBus.emitItemSelected(item.id);
+      EditorEventBus/* default.item.selected.specific.$emit */.Z.item.selected.specific.$emit(this.editorId, item.id);
     }
 
     this.updateMultiItemEditBox();
@@ -12317,7 +12355,7 @@ class SchemeContainer {
     forEach_default()(items, item => {
       this.selectedItems.push(item);
       this.selectedItemsMap[item.id] = true;
-      if (this.eventBus) this.eventBus.emitItemSelected(item.id);
+      EditorEventBus/* default.item.selected.specific.$emit */.Z.item.selected.specific.$emit(this.editorId, item.id);
     });
     this.updateMultiItemEditBox();
   }
@@ -12376,10 +12414,7 @@ class SchemeContainer {
     this.selectedItems = []; // First we should reset selectedItems array and only then emit event for each event
     // Some components check selectedItems array to get information whether item is selected or not
 
-    if (this.eventBus) {
-      forEach_default()(itemIds, itemId => this.eventBus.emitItemDeselected(itemId));
-    }
-
+    forEach_default()(itemIds, itemId => EditorEventBus/* default.item.deselected.specific.$emit */.Z.item.deselected.specific.$emit(this.editorId, itemId));
     this.updateMultiItemEditBox();
   }
   /**
@@ -12498,7 +12533,7 @@ class SchemeContainer {
       const colonIndex = selector.indexOf(':');
 
       if (colonIndex > 0) {
-        const expression = selector.substring(0, colonIndex);
+        const expression = selector.substring(0, colonIndex).trim();
 
         if (expression === 'tag') {
           return this.findItemsByTag(selector.substr(colonIndex + 1).trim());
@@ -12512,6 +12547,7 @@ class SchemeContainer {
   copySelectedItems() {
     const copyBuffer = [];
     forEach_default()(this.selectedItems, item => {
+      // const itemCopy = utils.clone(item);
       copyBuffer.push(ui_utils/* default.clone */.Z.clone(item));
     });
     return JSON.stringify(copyBuffer);
@@ -12566,7 +12602,7 @@ class SchemeContainer {
 
         if (clonedItem && !clonedItem.meta.componentRoot) {
           this.setPropertyForItem(clonedItem, setter);
-          this.eventBus.emitItemChanged(clonedItem.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, clonedItem.id);
         }
       });
     }
@@ -12580,7 +12616,7 @@ class SchemeContainer {
       // as we don't need to copy it twice
       if (!find_default()(item.meta.ancestorIds, ancestorId => copiedItemIds[ancestorId] === 1)) {
         copiedItemIds[item.id] = 1;
-        const worldPoint = this.worldPointOnItem(0, 0, item);
+        const worldPivotPoint = this.worldPointOnItem(item.area.px * item.area.w, item.area.py * item.area.h, item);
         const worldAngle = worldAngleOfItem(item);
         const newItem = this.copyItem(item);
 
@@ -12590,9 +12626,17 @@ class SchemeContainer {
           newItem.name = item.name;
         }
 
-        newItem.area.x = worldPoint.x;
-        newItem.area.y = worldPoint.y;
         newItem.area.r = worldAngle;
+        const translation = myMath/* default.findTranslationMatchingWorldPoint */.Z.findTranslationMatchingWorldPoint(worldPivotPoint.x, worldPivotPoint.y, item.area.px * item.area.w, item.area.py * item.area.h, item.area, item.meta.transformMatrix);
+
+        if (translation) {
+          newItem.area.x = translation.x;
+          newItem.area.y = translation.y;
+        } else {
+          const worldPoint = this.worldPointOnItem(0, 0, item);
+          newItem.area.x = worldPoint.x;
+          newItem.area.y = worldPoint.y;
+        }
 
         if (item.meta.componentRoot) {
           newItem.meta.componentRoot = true;
@@ -12603,14 +12647,12 @@ class SchemeContainer {
     }); // collecting id conversions so that later it could be used for converting attached connectors
 
     const idOldToNewConversions = new Map();
-    forEach_default()(copiedItems, copiedItem => {
-      (0,Item/* traverseItems */.Hp)(copiedItem, item => {
-        idOldToNewConversions.set(item.meta.oldId, item.id);
+    (0,Item/* traverseItems */.Hp)(copiedItems, item => {
+      idOldToNewConversions.set(item.meta.oldId, item.id);
 
-        if (shouldIndexClones) {
-          this.indexSingleCloneItem(item.meta.oldId, item.id);
-        }
-      });
+      if (shouldIndexClones) {
+        this.indexSingleCloneItem(item.meta.oldId, item.id);
+      }
     }); //TODO OPTIMIZE: we don't need to execute code below for a scheme container in edit mode
     // recreates element selector in case the source or destination was also copied together with it
 
@@ -12626,47 +12668,45 @@ class SchemeContainer {
       return elementSelector;
     };
 
-    forEach_default()(copiedItems, copiedItem => {
-      (0,Item/* traverseItems */.Hp)(copiedItem, item => {
-        if (item.shape === 'connector') {
-          item.shapeProps.sourceItem = rebuildElementSelector(item.shapeProps.sourceItem);
-          item.shapeProps.destinationItem = rebuildElementSelector(item.shapeProps.destinationItem);
-        }
+    (0,Item/* traverseItems */.Hp)(copiedItems, item => {
+      if (item.shape === 'connector') {
+        item.shapeProps.sourceItem = rebuildElementSelector(item.shapeProps.sourceItem);
+        item.shapeProps.destinationItem = rebuildElementSelector(item.shapeProps.destinationItem);
+      }
 
-        if (item.shape === 'frame_player') {
-          forEach_default()(item.shapeProps.animations, animation => {
-            if (animation.kind === 'item') {
-              animation.id = idOldToNewConversions.get(animation.id);
+      if (item.shape === 'frame_player') {
+        forEach_default()(item.shapeProps.animations, animation => {
+          if (animation.kind === 'item') {
+            animation.id = idOldToNewConversions.get(animation.id);
+          }
+        });
+        forEach_default()(item.shapeProps.functions, animationFunction => {
+          const funcDef = AnimationFunctions[animationFunction.functionId];
+
+          if (!funcDef) {
+            return;
+          }
+
+          forEach_default()(funcDef.args, (argDef, argName) => {
+            if (argDef.type === 'element') {
+              animationFunction.args[argName] = rebuildElementSelector(animationFunction.args[argName]);
             }
           });
-          forEach_default()(item.shapeProps.functions, animationFunction => {
-            const funcDef = AnimationFunctions[animationFunction.functionId];
+        });
+      } // converting behavior events as well
 
-            if (!funcDef) {
-              return;
-            }
 
-            forEach_default()(funcDef.args, (argDef, argName) => {
-              if (argDef.type === 'element') {
-                animationFunction.args[argName] = rebuildElementSelector(animationFunction.args[argName]);
+      forEach_default()(item.behavior.events, behaviorEvent => {
+        forEach_default()(behaviorEvent.actions, action => {
+          action.element = rebuildElementSelector(action.element); // converting element args of the function calls (e.g. path in "move" function)
+
+          if (Functions/* default.main */.Z.main[action.method]) {
+            forEach_default()(Functions/* default.main */.Z.main[action.method].args, (argConfig, argName) => {
+              if (argConfig.type === 'element' && action.args[argName]) {
+                action.args[argName] = rebuildElementSelector(action.args[argName]);
               }
             });
-          });
-        } // converting behavior events as well
-
-
-        forEach_default()(item.behavior.events, behaviorEvent => {
-          forEach_default()(behaviorEvent.actions, action => {
-            action.element = rebuildElementSelector(action.element); // converting element args of the function calls (e.g. path in "move" function)
-
-            if (Functions/* default.main */.Z.main[action.method]) {
-              forEach_default()(Functions/* default.main */.Z.main[action.method].args, (argConfig, argName) => {
-                if (argConfig.type === 'element' && action.args[argName]) {
-                  action.args[argName] = rebuildElementSelector(action.args[argName]);
-                }
-              });
-            }
-          });
+          }
         });
       });
     });
@@ -12825,7 +12865,7 @@ class SchemeContainer {
 
         updateItemRevision(item);
         this.readjustItemAndDescendants(item.id, isSoft, context, precision);
-        if (this.eventBus) this.eventBus.emitItemChanged(item.id, 'area');
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id, 'area');
         this.updatePropertyForClones(item, clone => {
           clone.area.x = item.area.x;
           clone.area.y = item.area.y;
@@ -12837,7 +12877,7 @@ class SchemeContainer {
         });
       }
     });
-    if (this.eventBus) this.eventBus.$emit(this.eventBus.MULTI_ITEM_EDIT_BOX_ITEMS_UPDATED);
+    EditorEventBus/* default.editBox.updated.$emit */.Z.editBox.updated.$emit(this.editorId);
   }
   /**
    * Searches for all item names and adds numeric index so that it becomes unique in the scheme
@@ -13129,10 +13169,6 @@ class SchemeContainer {
     return this.frameAnimations[itemId];
   }
 
-  getEventBus() {
-    return this.eventBus;
-  }
-
   alignItemsHorizontally(items) {
     if (items.length < 2) {
       return;
@@ -13190,10 +13226,10 @@ class SchemeContainer {
       prevWorldOffset = dx + worldBoxes[i].bbox.x + worldBoxes[i].bbox.w;
       item.area.x += correction.x;
       item.area.y += correction.y;
-      this.eventBus.emitItemChanged(item.id, 'area');
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id, 'area');
     }
 
-    this.eventBus.emitSchemeChangeCommited();
+    this.listener.onSchemeChangeCommitted(this.editorId);
     this.updateMultiItemEditBox();
   }
 
@@ -13254,10 +13290,10 @@ class SchemeContainer {
       prevWorldOffset = dy + worldBoxes[i].bbox.y + worldBoxes[i].bbox.h;
       item.area.x += correction.x;
       item.area.y += correction.y;
-      this.eventBus.emitItemChanged(item.id, 'area');
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id, 'area');
     }
 
-    this.eventBus.emitSchemeChangeCommited();
+    this.listener.onSchemeChangeCommitted(this.editorId);
     this.updateMultiItemEditBox();
   }
 
@@ -13288,10 +13324,10 @@ class SchemeContainer {
 
       forEach_default()(items, item => {
         correctionCallback(item, correction);
-        this.eventBus.emitItemChanged(item.id, 'area');
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, item.id, 'area');
       });
     });
-    this.eventBus.emitSchemeChangeCommited();
+    this.listener.onSchemeChangeCommitted(this.editorId);
     this.updateMultiItemEditBox();
   }
 
@@ -13356,6 +13392,146 @@ class SchemeContainer {
 
 /***/ }),
 
+/***/ 4925:
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "Z": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(4486);
+/* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _components_editor_items_shapes_Shape__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(3363);
+/* harmony import */ var _scheme_SchemeContainer__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(8566);
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
+
+
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = ({
+  setItemControlPoints(store, item) {
+    const shape = _components_editor_items_shapes_Shape__WEBPACK_IMPORTED_MODULE_1__/* ["default"].find */ .Z.find(item.shape);
+
+    if (shape && shape.controlPoints) {
+      const controlPoints = shape.controlPoints.make(item); // since item control points are supposed to be used by multi-item edit box
+      // and it uses scale of 1 always
+      // we need to convert positions of those points
+      // by recalculating the complete scaling effect of the item relative to the world
+
+      const scalingVector = (0,_scheme_SchemeContainer__WEBPACK_IMPORTED_MODULE_2__/* .worldScalingVectorOnItem */ .pD)(item);
+      lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(controlPoints, controlPoint => {
+        controlPoint.x = controlPoint.x * scalingVector.x;
+        controlPoint.y = controlPoint.y * scalingVector.y;
+      });
+      store.dispatch('setItemControlPoints', controlPoints);
+    } else {
+      this.clearItemControlPoints(store);
+    }
+  },
+
+  clearItemControlPoints(store) {
+    store.dispatch('clearItemControlPoints');
+  },
+
+  setMultiSelectBox(store, box) {
+    store.dispatch('setMultiSelectBox', box);
+  },
+
+  setSelectedConnectorPath(store, path) {
+    store.dispatch('setSelectedConnectorPath', path);
+  },
+
+  /**
+   *
+   * @param {*} store
+   * @param {ItemSnapper} snapper
+   */
+  setItemSnapper(store, snapper) {
+    store.dispatch('setItemSnapper', snapper);
+  },
+
+  clearItemSnappers(store) {
+    store.dispatch('clearItemSnappers');
+  },
+
+  toggleAutoRemount(store) {
+    store.dispatch('toggleAutoRemount');
+  },
+
+  togglePivot(store) {
+    store.dispatch('togglePivot');
+  },
+
+  setShowClickableMarkers(store, show) {
+    store.dispatch('setShowClickableMarkers', show);
+  },
+
+  proposeConnectorDestinationItems(store, connectorItemId, mx, my) {
+    store.dispatch('proposeConnectorDestinationItems', {
+      connectorItemId,
+      mx,
+      my
+    });
+  },
+
+  disableProposeConnectorDestinationItems(store) {
+    store.dispatch('disableProposeConnectorDestinationItems');
+  },
+
+  addInfoSystemMessage(store, message, id) {
+    store.dispatch('addSystemMessage', {
+      status: 'info',
+      message,
+      id
+    });
+  },
+
+  addErrorSystemMessage(store, message, id) {
+    store.dispatch('addSystemMessage', {
+      status: 'error',
+      message,
+      id
+    });
+  },
+
+  removeSystemMessage(store, id) {
+    store.dispatch('removeSystemMessage', id);
+  },
+
+  setDefaultConnectorSmoothing(store, smoothing) {
+    store.dispatch('setDefaultConnectorSmoothing', smoothing);
+  },
+
+  copyItemStyle(store, item) {
+    store.dispatch('copyItemStyle', item);
+  },
+
+  // used in connecting state and set the current connector item that is being created
+  setCurrentConnector(store, item) {
+    store.dispatch('setCurrentConnector', item);
+  },
+
+  addArtPack(store, artPackId, artPack) {
+    store.dispatch('addArtPack', {
+      artPack,
+      artPackId
+    });
+  },
+
+  removeArtPack(store, artPackId) {
+    store.dispatch('removeArtPack', artPackId);
+  },
+
+  registerShapeGroupId(store, shapeGroupId) {
+    store.dispatch('registerShapeGroupId', shapeGroupId);
+  }
+
+});
+
+/***/ }),
+
 /***/ 2672:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
@@ -13365,12 +13541,15 @@ class SchemeContainer {
 /* harmony export */ });
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(4486);
 /* harmony import */ var lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(lodash_forEach__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _functions_Functions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(3013);
+/* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(2017);
+/* harmony import */ var _functions_Functions_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(3605);
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 
+
+const log = new _logger_js__WEBPACK_IMPORTED_MODULE_1__/* .Logger */ .Yd('Compiler');
 
 function enrichFuncArgs(args, funcDef) {
   lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(funcDef.args, (argDef, argName) => {
@@ -13383,20 +13562,24 @@ function enrichFuncArgs(args, funcDef) {
 
 class Compiler {
   /**
-   * 
-   * @param {SchemeContainer} schemeContainer 
-   * @param {SchemeItem} selfItem 
-   * @param {Array} actions 
+   *
+   * @param {SchemeContainer} schemeContainer
+   * @param {SchemeItem} selfItem
+   * @param {Array} actions
    */
   compileActions(schemeContainer, selfItem, actions) {
     const funcs = [];
     lodash_forEach__WEBPACK_IMPORTED_MODULE_0___default()(actions, action => {
-      if (_functions_Functions_js__WEBPACK_IMPORTED_MODULE_1__/* ["default"].main.hasOwnProperty */ .Z.main.hasOwnProperty(action.method)) {
+      if (!action.on) {
+        return;
+      }
+
+      if (_functions_Functions_js__WEBPACK_IMPORTED_MODULE_2__/* ["default"].main.hasOwnProperty */ .Z.main.hasOwnProperty(action.method)) {
         if (action.element) {
           const elements = schemeContainer.findElementsBySelector(action.element, selfItem);
 
           if (elements) {
-            const knownFunc = _functions_Functions_js__WEBPACK_IMPORTED_MODULE_1__/* ["default"].main */ .Z.main[action.method];
+            const knownFunc = _functions_Functions_js__WEBPACK_IMPORTED_MODULE_2__/* ["default"].main */ .Z.main[action.method];
 
             if (knownFunc) {
               const args = enrichFuncArgs(action.args, knownFunc);
@@ -13423,6 +13606,7 @@ class Compiler {
         }
       }
     });
+    log.info('Compiling functions for item', selfItem ? `${selfItem.id}/${selfItem.name}` : '');
     return (userEventBus, revision, subscribedItemId, eventName) => {
       const subscribedItem = schemeContainer.findItemById(subscribedItemId);
 
@@ -13442,11 +13626,13 @@ class Compiler {
         let f = funcs[index];
 
         if (userEventBus.isActionAllowed(revision)) {
+          log.info('Executing', f.func.name, 'function');
           f.func.execute(f.element, f.args, schemeContainer, userEventBus, resultCallback, subscribedItem, eventName);
-        } else {}
+        }
       };
 
       if (userEventBus.isActionAllowed(revision)) {
+        log.info('Executing', funcs[0].func.name, 'function');
         funcs[0].func.execute(funcs[0].element, funcs[0].args, schemeContainer, userEventBus, resultCallback, subscribedItem, eventName);
       }
     };
@@ -13489,7 +13675,7 @@ class Compiler {
 
 /***/ }),
 
-/***/ 3013:
+/***/ 3605:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -13507,8 +13693,8 @@ var AnimationRegistry = __webpack_require__(9737);
 var ValueAnimation = __webpack_require__(3805);
 // EXTERNAL MODULE: ./src/ui/colors.js
 var colors = __webpack_require__(6012);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/Shape.js
 var Shape = __webpack_require__(3363);
 // EXTERNAL MODULE: ./src/ui/scheme/Item.js
@@ -13531,8 +13717,8 @@ function _defineProperty(obj, key, value) { if (key in obj) { Object.definePrope
 
 
 
-function playAnimation(item, args, resultCallback, updateCallback) {
-  AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+function playAnimation(editorId, item, args, resultCallback, updateCallback) {
+  (0,AnimationRegistry/* playInAnimationRegistry */.oK)(editorId, new ValueAnimation/* default */.ZP({
     durationMillis: args.animationDuration * 1000.0,
     animationType: args.transition,
     update: updateCallback,
@@ -13548,7 +13734,7 @@ function supportsAnimationForSetFunction(argType) {
   return argType === 'number' || argType === 'color' || argType === 'advanced-color';
 }
 
-function animateGradientColor(item, args, resultCallback, startGradient, endGradient) {
+function animateGradientColor(editorId, item, args, resultCallback, startGradient, endGradient) {
   if (startGradient.colors.length !== endGradient.colors.length) {
     return false;
   }
@@ -13572,7 +13758,7 @@ function animateGradientColor(item, args, resultCallback, startGradient, endGrad
     };
   }
 
-  playAnimation(item, args, resultCallback, t => {
+  playAnimation(editorId, item, args, resultCallback, t => {
     color.gradient.direction = originalDirection * (1 - t) + endGradient.direction * t;
     color.gradient.colors.forEach((c, i) => {
       c.c = (0,colors/* encodeColor */.N)({
@@ -13583,12 +13769,12 @@ function animateGradientColor(item, args, resultCallback, startGradient, endGrad
       });
       c.p = decodedColors[i].startPos * (1 - t) + decodedColors[i].endPos * t;
     });
-    EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+    EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id);
   });
   return true;
 }
 
-function animateAdvancedColor(item, args, resultCallback, startValue) {
+function animateAdvancedColor(editorId, item, args, resultCallback, startValue) {
   if (typeof args.value !== 'object' || typeof startValue !== 'object') {
     return false;
   }
@@ -13596,7 +13782,7 @@ function animateAdvancedColor(item, args, resultCallback, startValue) {
   if (args.value.type === 'solid' && startValue.type === 'solid') {
     const startColor = (0,colors/* parseColor */.l)(startValue.color);
     const endColor = (0,colors/* parseColor */.l)(args.value.color);
-    playAnimation(item, args, resultCallback, t => {
+    playAnimation(editorId, item, args, resultCallback, t => {
       utils/* default.setObjectProperty */.Z.setObjectProperty(item, args.field, {
         type: 'solid',
         color: (0,colors/* encodeColor */.N)({
@@ -13606,42 +13792,42 @@ function animateAdvancedColor(item, args, resultCallback, startValue) {
           a: startColor.a * (1 - t) + endColor.a * t
         })
       });
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id);
     });
     return true;
   }
 
   if (args.value.type === 'gradient' && startValue.type === 'gradient') {
-    return animateGradientColor(item, args, resultCallback, startValue.gradient, args.value.gradient);
+    return animateGradientColor(editorId, item, args, resultCallback, startValue.gradient, args.value.gradient);
   }
 
   return false;
 }
 
-function animateValue(property, item, args, resultCallback) {
+function animateValue(editorId, property, item, args, resultCallback) {
   const startValue = utils/* default.getObjectProperty */.Z.getObjectProperty(item, args.field);
 
   if (property.type === 'number') {
-    playAnimation(item, args, resultCallback, t => {
+    playAnimation(editorId, item, args, resultCallback, t => {
       utils/* default.setObjectProperty */.Z.setObjectProperty(item, args.field, startValue * (1 - t) + args.value * t);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id);
     });
   } else if (property.type === 'color') {
     const startColor = (0,colors/* parseColor */.l)(startValue);
     const endColor = (0,colors/* parseColor */.l)(args.value);
-    playAnimation(item, args, resultCallback, t => {
+    playAnimation(editorId, item, args, resultCallback, t => {
       utils/* default.setObjectProperty */.Z.setObjectProperty(item, args.field, (0,colors/* encodeColor */.N)({
         r: startColor.r * (1 - t) + endColor.r * t,
         g: startColor.g * (1 - t) + endColor.g * t,
         b: startColor.b * (1 - t) + endColor.b * t,
         a: startColor.a * (1 - t) + endColor.a * t
       }));
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id);
     });
   } else if (property.type === 'advanced-color') {
-    if (!animateAdvancedColor(item, args, resultCallback, startValue)) {
+    if (!animateAdvancedColor(editorId, item, args, resultCallback, startValue)) {
       utils/* default.setObjectProperty */.Z.setObjectProperty(item, args.field, args.value);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id);
     }
   }
 }
@@ -13705,14 +13891,14 @@ function animateValue(property, item, args, resultCallback) {
         resultCallback();
       }
 
-      animateValue(property, item, args, () => {
+      animateValue(schemeContainer.editorId, property, item, args, () => {
         if (!args.inBackground) {
           resultCallback();
         }
       });
     } else {
       utils/* default.setObjectProperty */.Z.setObjectProperty(item, args.field, args.value);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
       resultCallback();
     }
   }
@@ -13779,18 +13965,18 @@ function animateValue(property, item, args, resultCallback) {
     const initialOpacity = item.opacity;
 
     if (args.animated) {
-      AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ValueAnimation/* default */.ZP({
         durationMillis: args.animationDuration * 1000.0,
         animationType: args.transition,
 
         update(t) {
           item.opacity = initialOpacity * (1.0 - t);
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
         },
 
         destroy() {
           item.visible = false;
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
 
           if (!args.inBackground) {
             resultCallback();
@@ -13867,25 +14053,25 @@ function animateValue(property, item, args, resultCallback) {
     }
 
     if (args.animated) {
-      AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ValueAnimation/* default */.ZP({
         durationMillis: args.animationDuration * 1000.0,
         animationType: args.transition,
 
         init() {
           item.opacity = 0.0;
           item.visible = true;
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
         },
 
         update(t) {
           item.opacity = 100.0 * t;
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
         },
 
         destroy() {
           item.visible = true;
           item.opacity = 100.0;
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
 
           if (!args.inBackground) {
             resultCallback();
@@ -14164,7 +14350,7 @@ function isInsideHUD(item, schemeContainer) {
       const oldX = schemeContainer.screenTransform.x;
       const oldY = schemeContainer.screenTransform.y;
       const oldZoom = schemeContainer.screenTransform.scale;
-      AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ValueAnimation/* default */.ZP({
         durationMillis: args.animationDuration * 1000.0,
         animationType: 'ease-in-out',
         update: t => {
@@ -14173,7 +14359,7 @@ function isInsideHUD(item, schemeContainer) {
           schemeContainer.screenTransform.y = oldY * (1.0 - t) + destY * t;
         },
         destroy: () => {
-          EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, schemeContainer.screenTransform);
+          EditorEventBus/* default.screenTransformUpdated.$emit */.Z.screenTransformUpdated.$emit(schemeContainer.editorId, schemeContainer.screenTransform);
 
           if (!args.inBackground) {
             resultCallback();
@@ -14188,7 +14374,7 @@ function isInsideHUD(item, schemeContainer) {
       schemeContainer.screenTransform.scale = newZoom;
       schemeContainer.screenTransform.x = destX;
       schemeContainer.screenTransform.y = destY;
-      EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, schemeContainer.screenTransform);
+      EditorEventBus/* default.screenTransformUpdated.$emit */.Z.screenTransformUpdated.$emit(schemeContainer.editorId, schemeContainer.screenTransform);
       resultCallback();
     }
   }
@@ -14320,7 +14506,7 @@ class CrawlEffectAnimation extends Animation/* default */.Z {
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
-      AnimationRegistry/* default.play */.Z.play(new CrawlEffectAnimation(item, args, resultCallback), item.id, this.name);
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new CrawlEffectAnimation(item, args, resultCallback), item.id, this.name);
     }
 
     if (args.inBackground) {
@@ -14340,9 +14526,8 @@ class CrawlEffectAnimation extends Animation/* default */.Z {
   args: {},
 
   execute(entity, args, schemeContainer, userEventBus, resultCallback) {
-    //TODO figure out a way to stop all invocations for specified item
     if (entity && entity.id) {
-      AnimationRegistry/* default.stopAllAnimationsForEntity */.Z.stopAllAnimationsForEntity(entity.id);
+      (0,AnimationRegistry/* stopAllAnimationsForEntityInAnimationRegistry */.aG)(schemeContainer.editorId, entity.id);
     }
 
     resultCallback();
@@ -14483,7 +14668,7 @@ class ItemParticle extends Particle {
     this.particleItem.area.sy = this.scale;
     this.particleItem.area.r = this.angle;
     this.particleItem.opacity = this.opacity * 100;
-    EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.particleItem.id);
+    EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, this.particleItem.id);
   }
 
   destroy() {
@@ -14892,7 +15077,7 @@ class ItemParticleEffectAnimation extends Animation/* default */.Z {
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
-      AnimationRegistry/* default.play */.Z.play(new ItemParticleEffectAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ItemParticleEffectAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
     }
 
     if (args.inBackground) {
@@ -14911,8 +15096,9 @@ class ItemParticleEffectAnimation extends Animation/* default */.Z {
 
 
 class BlinkEffectAnimation extends Animation/* default */.Z {
-  constructor(item, args, resultCallback) {
+  constructor(editorId, item, args, resultCallback) {
     super();
+    this.editorId = editorId;
     this.item = item;
     this.args = args;
     this.resultCallback = resultCallback;
@@ -14989,7 +15175,7 @@ class BlinkEffectAnimation extends Animation/* default */.Z {
       }
     }
 
-    EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+    EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, this.item.id);
     return this.elapsedTime < this.args.duration * 1000.0;
   }
 
@@ -15081,7 +15267,7 @@ class BlinkEffectAnimation extends Animation/* default */.Z {
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
-      AnimationRegistry/* default.play */.Z.play(new BlinkEffectAnimation(item, args, resultCallback), item.id, this.name);
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new BlinkEffectAnimation(schemeContainer.editorId, item, args, resultCallback), item.id, this.name);
 
       if (args.inBackground) {
         resultCallback();
@@ -15137,13 +15323,13 @@ class MoveAnimation extends Animation/* default */.Z {
       this.item.area.x = this.originalPosition.x * (1.0 - convertedT) + this.destinationPosition.x * convertedT;
       this.item.area.y = this.originalPosition.y * (1.0 - convertedT) + this.destinationPosition.y * convertedT;
       this.schemeContainer.reindexItemTransforms(this.item);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       return true;
     } else {
       this.item.area.x = this.destinationPosition.x;
       this.item.area.y = this.destinationPosition.y;
       this.schemeContainer.reindexItemTransforms(this.item);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
     }
 
     return false;
@@ -15211,7 +15397,7 @@ class MoveAnimation extends Animation/* default */.Z {
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
       if (args.animate) {
-        AnimationRegistry/* default.play */.Z.play(new MoveAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+        (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new MoveAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
 
         if (args.inBackground) {
           resultCallback();
@@ -15336,13 +15522,13 @@ class MoveToItemAnimation extends Animation/* default */.Z {
         this.item.area.h = this.originalHeight * (1.0 - convertedT) + this.destinationHeight * convertedT;
       }
 
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       this.schemeContainer.reindexItemTransforms(this.item);
       return shouldProceedAnimating;
     } else {
       this.item.area.x = this.destinationPosition.x;
       this.item.area.y = this.destinationPosition.y;
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       this.schemeContainer.reindexItemTransforms(this.item);
     }
 
@@ -15455,7 +15641,7 @@ class MoveToItemAnimation extends Animation/* default */.Z {
 
       if (destinationPosition) {
         if (args.animate) {
-          AnimationRegistry/* default.play */.Z.play(new MoveToItemAnimation(item, args, destinationPosition, destinationAngle, destinationWidth, destinationHeight, schemeContainer, resultCallback), item.id, this.name);
+          (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new MoveToItemAnimation(item, args, destinationPosition, destinationAngle, destinationWidth, destinationHeight, schemeContainer, resultCallback), item.id, this.name);
 
           if (args.inBackground) {
             resultCallback();
@@ -15478,7 +15664,7 @@ class MoveToItemAnimation extends Animation/* default */.Z {
             item.area.h = destinationHeight;
           }
 
-          EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+          EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
           schemeContainer.reindexItemTransforms(item);
         }
       }
@@ -15568,14 +15754,14 @@ class RotateAnimation extends Animation/* default */.Z {
 
       this.item.area.r = this.originalAngle * (1.0 - convertedT) + this.destinationAngle * convertedT;
       this.schemeContainer.reindexItemTransforms(this.item);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       return proceed;
     } else {
       this.item.area.r = this.destinationAngle;
       this.schemeContainer.reindexItemTransforms(this.item);
     }
 
-    EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+    EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
     return false;
   }
 
@@ -15632,7 +15818,7 @@ class RotateAnimation extends Animation/* default */.Z {
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
       if (args.animate) {
-        AnimationRegistry/* default.play */.Z.play(new RotateAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+        (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new RotateAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
 
         if (args.inBackground) {
           resultCallback();
@@ -15692,13 +15878,13 @@ class ScaleAnimation extends Animation/* default */.Z {
 
       this.item.area.sx = this.originalArea.sx * (1.0 - convertedT) + this.destinationScale.sx * convertedT;
       this.item.area.sy = this.originalArea.sy * (1.0 - convertedT) + this.destinationScale.sy * convertedT;
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       this.schemeContainer.reindexItemTransforms(this.item);
       return proceed;
     } else {
       this.item.area.sx = this.destinationScale.sx;
       this.item.area.sy = this.destinationScale.sy;
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       this.schemeContainer.reindexItemTransforms(this.item);
     }
 
@@ -15767,7 +15953,7 @@ class ScaleAnimation extends Animation/* default */.Z {
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
       if (args.animate) {
-        AnimationRegistry/* default.play */.Z.play(new ScaleAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+        (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ScaleAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
 
         if (args.inBackground) {
           resultCallback();
@@ -15777,7 +15963,7 @@ class ScaleAnimation extends Animation/* default */.Z {
       } else {
         item.area.sx = parseFloat(args.scaleX);
         item.area.sy = parseFloat(args.scaleY);
-        EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
         schemeContainer.reindexItemTransforms(item);
       }
     }
@@ -15854,7 +16040,7 @@ class MoveAlongPathAnimation extends Animation/* default */.Z {
 
       const convertedT = (0,ValueAnimation/* convertTime */.rJ)(t, this.args.movement);
       this.moveToPathLength(this.pathTotalLength * (this.args.startPosition * (1.0 - convertedT) + this.args.endPosition * convertedT) / 100.0);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       return true;
     }
 
@@ -15942,7 +16128,7 @@ class MoveAlongPathAnimation extends Animation/* default */.Z {
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
-      AnimationRegistry/* default.play */.Z.play(new MoveAlongPathAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new MoveAlongPathAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
 
       if (args.inBackground) {
         resultCallback();
@@ -15959,7 +16145,6 @@ class MoveAlongPathAnimation extends Animation/* default */.Z {
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
 
 
 
@@ -16018,13 +16203,13 @@ class MoveRandomlyAnimation extends Animation/* default */.Z {
       this.item.area.x = Math.pow(1 - t, 2) * this.point1.x + 2 * (1 - t) * t * this.point2.x + t * t * this.point3.x;
       this.item.area.y = Math.pow(1 - t, 2) * this.point1.y + 2 * (1 - t) * t * this.point2.y + t * t * this.point3.y;
       this.schemeContainer.reindexItemTransforms(this.item);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
       return true;
     } else {
       this.item.area.x = this.itemInitialPosition.x;
       this.item.area.y = this.itemInitialPosition.y;
       this.schemeContainer.reindexItemTransforms(this.item);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(this.item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.schemeContainer.editorId, this.item.id);
     }
 
     return false;
@@ -16073,7 +16258,7 @@ class MoveRandomlyAnimation extends Animation/* default */.Z {
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item) {
-      AnimationRegistry/* default.play */.Z.play(new MoveRandomlyAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new MoveRandomlyAnimation(item, args, schemeContainer, resultCallback), item.id, this.name);
 
       if (args.inBackground) {
         resultCallback();
@@ -16093,6 +16278,9 @@ class MoveRandomlyAnimation extends Animation/* default */.Z {
 /* harmony default export */ const WaitFunction = ({
   name: 'Wait',
   description: 'Waits for specified amount of time until the next function',
+  // Means that this function is always expected to get array of items and in cases when it is applied
+  // to a group of items - it will only be invoked once with array of those items as a first argument
+  multiItem: true,
   args: {
     time: {
       type: 'number',
@@ -16106,7 +16294,7 @@ class MoveRandomlyAnimation extends Animation/* default */.Z {
     return '' + args.time;
   },
 
-  execute(item, args, schemeContainer, userEventBus, resultCallback) {
+  execute(items, args, schemeContainer, userEventBus, resultCallback) {
     setTimeout(resultCallback, args.time * 1000.0);
   }
 
@@ -16134,12 +16322,12 @@ function popPreviousVisibilites() {
   args: {},
 
   /**
-   * 
-   * @param {Item} item 
-   * @param {Object} args 
-   * @param {SchemeContainer} schemeContainer 
-   * @param {*} userEventBus 
-   * @param {*} resultCallback 
+   *
+   * @param {Item} item
+   * @param {Object} args
+   * @param {SchemeContainer} schemeContainer
+   * @param {*} userEventBus
+   * @param {*} resultCallback
    */
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     const visibilities = {
@@ -16151,7 +16339,7 @@ function popPreviousVisibilites() {
 
       if (topLevelItem.id !== item.id) {
         topLevelItem.visible = false;
-        EventBus/* default.emitItemChanged */.Z.emitItemChanged(topLevelItem.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, topLevelItem.id);
       }
     }); // checking whether the item was toggled already
 
@@ -16160,7 +16348,7 @@ function popPreviousVisibilites() {
     }
 
     item.visible = true;
-    EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+    EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
     resultCallback();
   }
 
@@ -16180,12 +16368,12 @@ function popPreviousVisibilites() {
   args: {},
 
   /**
-   * 
-   * @param {Item} item 
-   * @param {Object} args 
-   * @param {SchemeContainer} schemeContainer 
-   * @param {*} userEventBus 
-   * @param {*} resultCallback 
+   *
+   * @param {Item} item
+   * @param {Object} args
+   * @param {SchemeContainer} schemeContainer
+   * @param {*} userEventBus
+   * @param {*} resultCallback
    */
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     const visibilities = popPreviousVisibilites();
@@ -16193,7 +16381,7 @@ function popPreviousVisibilites() {
     if (visibilities) {
       forEach_default()(schemeContainer.getTopLevelItems(), topLevelItem => {
         topLevelItem.visible = visibilities.allItems[topLevelItem.id];
-        EventBus/* default.emitItemChanged */.Z.emitItemChanged(topLevelItem.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, topLevelItem.id);
       });
     }
 
@@ -16259,7 +16447,7 @@ function popPreviousVisibilites() {
       frameAnimation.setStopFrame(-1);
     }
 
-    AnimationRegistry/* default.play */.Z.play(frameAnimation, item.id, 'frame-player');
+    (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, frameAnimation, item.id, 'frame-player');
     resultCallback();
   }
 
@@ -16295,6 +16483,7 @@ function popPreviousVisibilites() {
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 /* harmony default export */ const LoadComponentFunction = ({
   name: 'Load component',
   description: 'Triggers loading of component. Applicable to "component" shapes only',
@@ -16313,14 +16502,7 @@ function popPreviousVisibilites() {
         return;
       }
 
-      const eventBus = schemeContainer.getEventBus();
-
-      if (!eventBus) {
-        resultCallback();
-        return;
-      }
-
-      eventBus.emitComponentLoadRequested(item);
+      EditorEventBus/* default.component.loadRequested.specific.$emit */.Z.component.loadRequested.specific.$emit(schemeContainer.editorId, item.id, item);
       resultCallback();
     });
   }
@@ -16334,6 +16516,7 @@ var Component = __webpack_require__(332);
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 
+
 /* harmony default export */ const DestroyComponentFunction = ({
   name: 'Destroy component',
   description: 'Removes all the loaded items of the component. Applicable to "component" shapes only',
@@ -16342,10 +16525,13 @@ var Component = __webpack_require__(332);
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     try {
-      item._childItems = {};
+      (0,Item/* traverseItems */.Hp)(item._childItems, subItem => {
+        userEventBus.clearEventsForItem(subItem.id);
+      });
+      item._childItems = [];
       schemeContainer.reindexItems();
       userEventBus.emitItemEvent(item.id, Component/* COMPONENT_DESTROYED */.YL);
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
     } catch (err) {
       console.error(err);
     }
@@ -16390,24 +16576,24 @@ var find_default = /*#__PURE__*/__webpack_require__.n(find);
   multiItem: true,
 
   /**
-   * 
+   *
    * @param {Array} items
-   * @param {Object} args 
-   * @param {SchemeContainer} schemeContainer 
-   * @param {*} userEventBus 
-   * @param {*} resultCallback 
+   * @param {Object} args
+   * @param {SchemeContainer} schemeContainer
+   * @param {*} userEventBus
+   * @param {*} resultCallback
    */
   execute(items, args, schemeContainer, userEventBus, resultCallback) {
     const groupItems = schemeContainer.findElementsBySelector(args.group);
     forEach_default()(groupItems, groupItem => {
       if (!find_default()(items, item => item.id === groupItem.id)) {
         groupItem.visible = false;
-        EventBus/* default.emitItemChanged */.Z.emitItemChanged(groupItem.id);
+        EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, groupItem.id);
       }
     });
     forEach_default()(items, item => {
       item.visible = true;
-      EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
+      EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(schemeContainer.editorId, item.id);
     });
     resultCallback();
   }
@@ -16435,23 +16621,27 @@ It can be used for cross-component communication`,
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
     if (item.meta && item.meta.parentId) {
-      userEventBus.emitItemEvent(item.meta.parentId, args.event);
-      const parent = schemeContainer.findItemById(item.meta.parentId);
-
-      if (!parent) {
-        return;
-      } // retransmitting event to component holder
-
-
-      if (parent.meta.isComponentContainer && parent.meta.parentId) {
-        userEventBus.emitItemEvent(parent.meta.parentId, args.event);
-      }
+      sentEventToParent(item, args.event, userEventBus, schemeContainer);
     }
 
     resultCallback();
   }
 
 });
+
+function sentEventToParent(item, event, userEventBus, schemeContainer) {
+  userEventBus.emitItemEvent(item.meta.parentId, event);
+  const parent = schemeContainer.findItemById(item.meta.parentId);
+
+  if (!parent) {
+    return;
+  } // retransmitting event to component holder
+
+
+  if (parent.meta.isComponentContainer && parent.meta.parentId) {
+    sentEventToParent(parent, event, userEventBus, schemeContainer);
+  }
+}
 ;// CONCATENATED MODULE: ./src/ui/userevents/functions/SendEventToChildrenFunction.js
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -16498,7 +16688,12 @@ function sendEventToItems(items, event, userEventBus) {
   }
 
   items.forEach(item => {
-    userEventBus.emitItemEvent(item.id, event);
+    if (item.meta.isComponentContainer) {
+      sendEventToItems(item.childItems, event, userEventBus);
+      sendEventToItems(item._childItems, event, userEventBus);
+    } else {
+      userEventBus.emitItemEvent(item.id, event);
+    }
   });
 }
 // EXTERNAL MODULE: ./src/ui/userevents/Events.js
@@ -16593,6 +16788,13 @@ const behaviorCompiler = new Compiler/* default */.Z();
   },
 
   execute(item, args, schemeContainer, userEventBus, resultCallback, subscribedItem, eventName) {
+    if (!subscribedItem) {
+      // this happens in case this repeater function was executed in a component diagram
+      // which got destroyed
+      resultCallback();
+      return;
+    }
+
     const suffix = args.name ? args.name : eventName;
     const startedField = `repeaterStarted_${suffix}`;
     const stoppedField = `repeaterStopped_${suffix}`;
@@ -16799,6 +17001,15 @@ const behaviorCompiler = new Compiler/* default */.Z();
       name: 'scale',
       type: 'number',
       value: 0
+    },
+    inBackground: {
+      name: 'In Background',
+      type: 'boolean',
+      value: false,
+      depends: {
+        animated: true
+      },
+      description: 'Play animation in background without blocking invokation of other actions'
     }
   },
 
@@ -16811,10 +17022,14 @@ const behaviorCompiler = new Compiler/* default */.Z();
   },
 
   execute(item, args, schemeContainer, userEventBus, resultCallback) {
+    if (args.inBackground) {
+      resultCallback();
+    }
+
     const oldX = schemeContainer.screenTransform.x;
     const oldY = schemeContainer.screenTransform.y;
     const oldZoom = schemeContainer.screenTransform.scale;
-    AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+    (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new ValueAnimation/* default */.ZP({
       durationMillis: 500.0,
       animationType: 'ease-in-out',
       update: t => {
@@ -16823,10 +17038,190 @@ const behaviorCompiler = new Compiler/* default */.Z();
         schemeContainer.screenTransform.y = oldY * (1.0 - t) + args.y * t;
       },
       destroy: () => {
-        EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, schemeContainer.screenTransform);
-        resultCallback();
+        EditorEventBus/* default.screenTransformUpdated.$emit */.Z.screenTransformUpdated.$emit(schemeContainer.editorId, schemeContainer.screenTransform);
+
+        if (!args.inBackground) {
+          resultCallback();
+        }
       }
     }), 'screen', 'screen-transform');
+  }
+
+});
+;// CONCATENATED MODULE: ./src/ui/userevents/functions/DrawEffectFunction.js
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
+
+
+/**
+ *
+ * @param {string} path
+ * @returns
+ */
+
+function breakPaths(path) {
+  const paths = path.split('M');
+  const result = [];
+  paths.forEach(p => {
+    p = p.trim();
+
+    if (p) {
+      result.push('M ' + p);
+    }
+  });
+  return result;
+}
+
+class DrawEffectAnimation extends Animation/* default */.Z {
+  constructor(item, args, resultCallback) {
+    super();
+    this.item = item;
+    this.args = args;
+    this.resultCallback = resultCallback;
+    this.domContainer = null;
+    this.time = 0.0;
+    this.paths = [];
+    this.totalPathsLength = 0;
+  }
+
+  init() {
+    this.domContainer = document.getElementById(`animation-container-${this.item.id}`);
+
+    if (!this.domContainer) {
+      return false;
+    }
+
+    const shape = Shape/* default.find */.Z.find(this.item.shape);
+
+    if (!shape) {
+      return false;
+    }
+
+    const path = shape.computePath(this.item);
+
+    if (!path) {
+      return false;
+    }
+
+    this.paths = [];
+    this.totalPathsLength = 0;
+    let offset = 0;
+    breakPaths(path).forEach(subPath => {
+      const domPath = this.svg('path', {
+        'd': subPath,
+        'stroke-width': this.args.strokeSize || 1,
+        'stroke': this.args.color,
+        'fill': 'none',
+        'stroke-linejoin': 'round'
+      });
+      const length = domPath.getTotalLength();
+      this.paths.push({
+        domPath,
+        length,
+        offset
+      });
+      this.totalPathsLength += length;
+      this.domContainer.appendChild(domPath);
+      domPath.setAttribute('stroke-dasharray', length);
+      domPath.setAttribute('stroke-dashoffset', length);
+      offset += length;
+    });
+    return true;
+  }
+
+  play(dt) {
+    this.time += dt;
+    let t = 1;
+
+    if (!myMath/* default.tooSmall */.Z.tooSmall(this.args.duration)) {
+      t = this.time / (this.args.duration * 1000.0);
+    }
+
+    const firstWay = t < 1;
+    let currentLength = firstWay ? this.totalPathsLength * t : this.totalPathsLength * (t - 1);
+
+    for (let i = 0; i < this.paths.length; i++) {
+      const diffLength = this.paths[i].offset + this.paths[i].length - currentLength;
+
+      if (diffLength > 0) {
+        this.paths[i].domPath.setAttribute('stroke-dashoffset', Math.floor(firstWay ? diffLength : this.paths[i].length + diffLength));
+
+        if (i > 0) {
+          this.paths[i - 1].domPath.setAttribute('stroke-dashoffset', firstWay ? 0 : this.paths[i - 1].length);
+        }
+
+        break;
+      }
+    }
+
+    if (this.args.twoWay) {
+      if (t > 2) {
+        return false;
+      }
+    } else {
+      if (t > 1) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  destroy() {
+    if (!this.args.inBackground) {
+      this.resultCallback();
+    }
+
+    this.paths.forEach(path => {
+      this.domContainer.removeChild(path.domPath);
+    });
+  }
+
+}
+
+/* harmony default export */ const DrawEffectFunction = ({
+  name: 'Draw Effect',
+  description: 'Animates outline by simulating a drawing effect',
+  args: {
+    color: {
+      name: 'Color',
+      type: 'color',
+      value: 'rgba(255,0,0,1.0)'
+    },
+    strokeSize: {
+      name: 'Stroke size',
+      type: 'number',
+      value: 2
+    },
+    duration: {
+      name: 'Duration (sec)',
+      type: 'number',
+      value: 2.0
+    },
+    twoWay: {
+      name: 'Two way',
+      type: 'boolean',
+      value: false
+    },
+    inBackground: {
+      name: 'In Background',
+      type: 'boolean',
+      value: false,
+      description: 'Play animation in background without blocking invokation of other actions'
+    }
+  },
+
+  execute(item, args, schemeContainer, userEventBus, resultCallback) {
+    if (item) {
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(schemeContainer.editorId, new DrawEffectAnimation(item, args, resultCallback), item.id, this.name);
+    }
+
+    if (args.inBackground) {
+      resultCallback();
+    }
   }
 
 });
@@ -16834,6 +17229,7 @@ const behaviorCompiler = new Compiler/* default */.Z();
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 
 
 
@@ -16875,6 +17271,7 @@ const behaviorCompiler = new Compiler/* default */.Z();
     _transformScreen: TransformScreenFunction,
     particleEffect: ItemParticleEffectFunction,
     crawlEffect: CrawlEffectFunction,
+    drawEffect: DrawEffectFunction,
     blinkEffect: BlinkEffectFunction,
     loadComponent: LoadComponentFunction,
     destroyComponent: DestroyComponentFunction,
@@ -16900,8 +17297,7 @@ const behaviorCompiler = new Compiler/* default */.Z();
     copyDescription: CopyDescriptionFunction,
     repeater: RepeaterFunction,
     stopRepeater: StopRepeaterFunction
-  },
-  scheme: {}
+  }
 });
 
 /***/ }),
@@ -17782,7 +18178,11 @@ exports.Doctype = ElementType.Doctype;
 
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -18023,6 +18423,10 @@ var Node = /** @class */ (function () {
     }
     Object.defineProperty(Node.prototype, "nodeType", {
         // Read-only aliases
+        /**
+         * [DOM spec](https://dom.spec.whatwg.org/#dom-node-nodetype)-compatible
+         * node {@link type}.
+         */
         get: function () {
             var _a;
             return (_a = nodeTypes.get(this.type)) !== null && _a !== void 0 ? _a : 1;
@@ -18032,6 +18436,10 @@ var Node = /** @class */ (function () {
     });
     Object.defineProperty(Node.prototype, "parentNode", {
         // Read-write aliases for properties
+        /**
+         * Same as {@link parent}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.parent;
         },
@@ -18042,6 +18450,10 @@ var Node = /** @class */ (function () {
         configurable: true
     });
     Object.defineProperty(Node.prototype, "previousSibling", {
+        /**
+         * Same as {@link prev}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.prev;
         },
@@ -18052,6 +18464,10 @@ var Node = /** @class */ (function () {
         configurable: true
     });
     Object.defineProperty(Node.prototype, "nextSibling", {
+        /**
+         * Same as {@link next}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.next;
         },
@@ -18089,6 +18505,10 @@ var DataNode = /** @class */ (function (_super) {
         return _this;
     }
     Object.defineProperty(DataNode.prototype, "nodeValue", {
+        /**
+         * Same as {@link data}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.data;
         },
@@ -18152,6 +18572,7 @@ var NodeWithChildren = /** @class */ (function (_super) {
     }
     Object.defineProperty(NodeWithChildren.prototype, "firstChild", {
         // Aliases
+        /** First child of the node. */
         get: function () {
             var _a;
             return (_a = this.children[0]) !== null && _a !== void 0 ? _a : null;
@@ -18160,6 +18581,7 @@ var NodeWithChildren = /** @class */ (function (_super) {
         configurable: true
     });
     Object.defineProperty(NodeWithChildren.prototype, "lastChild", {
+        /** Last child of the node. */
         get: function () {
             return this.children.length > 0
                 ? this.children[this.children.length - 1]
@@ -18169,6 +18591,10 @@ var NodeWithChildren = /** @class */ (function (_super) {
         configurable: true
     });
     Object.defineProperty(NodeWithChildren.prototype, "childNodes", {
+        /**
+         * Same as {@link children}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.children;
         },
@@ -18216,6 +18642,10 @@ var Element = /** @class */ (function (_super) {
     }
     Object.defineProperty(Element.prototype, "tagName", {
         // DOM Level 1 aliases
+        /**
+         * Same as {@link name}.
+         * [DOM spec](https://dom.spec.whatwg.org)-compatible alias.
+         */
         get: function () {
             return this.name;
         },
@@ -18319,6 +18749,9 @@ function cloneNode(node, recursive) {
         var children = recursive ? cloneChildren(node.children) : [];
         var clone_1 = new Element(node.name, __assign({}, node.attribs), children);
         children.forEach(function (child) { return (child.parent = clone_1); });
+        if (node.namespace != null) {
+            clone_1.namespace = node.namespace;
+        }
         if (node["x-attribsNamespace"]) {
             clone_1["x-attribsNamespace"] = __assign({}, node["x-attribsNamespace"]);
         }
@@ -18352,10 +18785,13 @@ function cloneNode(node, recursive) {
         result = instruction;
     }
     else {
-        throw new Error("Not implemented yet: " + node.type);
+        throw new Error("Not implemented yet: ".concat(node.type));
     }
     result.startIndex = node.startIndex;
     result.endIndex = node.endIndex;
+    if (node.sourceCodeLocation != null) {
+        result.sourceCodeLocation = node.sourceCodeLocation;
+    }
     return result;
 }
 exports.cloneNode = cloneNode;
@@ -26628,7 +27064,7 @@ let Declaration = __webpack_require__(4258)
 let Comment = __webpack_require__(7923)
 let Node = __webpack_require__(5631)
 
-let parse, Rule, AtRule
+let parse, Rule, AtRule, Root
 
 function cleanSource(nodes) {
   return nodes.map(i => {
@@ -26799,16 +27235,16 @@ class Container extends Node {
   }
 
   insertBefore(exist, add) {
-    exist = this.index(exist)
-
+    let existIndex = this.index(exist)
     let type = exist === 0 ? 'prepend' : false
-    let nodes = this.normalize(add, this.proxyOf.nodes[exist], type).reverse()
-    for (let node of nodes) this.proxyOf.nodes.splice(exist, 0, node)
+    let nodes = this.normalize(add, this.proxyOf.nodes[existIndex], type).reverse()
+    existIndex = this.index(exist)
+    for (let node of nodes) this.proxyOf.nodes.splice(existIndex, 0, node)
 
     let index
     for (let id in this.indexes) {
       index = this.indexes[id]
-      if (exist <= index) {
+      if (existIndex <= index) {
         this.indexes[id] = index + nodes.length
       }
     }
@@ -26819,15 +27255,15 @@ class Container extends Node {
   }
 
   insertAfter(exist, add) {
-    exist = this.index(exist)
-
-    let nodes = this.normalize(add, this.proxyOf.nodes[exist]).reverse()
-    for (let node of nodes) this.proxyOf.nodes.splice(exist + 1, 0, node)
+    let existIndex = this.index(exist)
+    let nodes = this.normalize(add, this.proxyOf.nodes[existIndex]).reverse()
+    existIndex = this.index(exist)
+    for (let node of nodes) this.proxyOf.nodes.splice(existIndex + 1, 0, node)
 
     let index
     for (let id in this.indexes) {
       index = this.indexes[id]
-      if (exist < index) {
+      if (existIndex < index) {
         this.indexes[id] = index + nodes.length
       }
     }
@@ -26939,7 +27375,7 @@ class Container extends Node {
     }
 
     let processed = nodes.map(i => {
-      // istanbul ignore next
+      /* c8 ignore next */
       if (!i[my]) Container.rebuild(i)
       i = i.proxyOf
       if (i.parent) i.parent.removeChild(i)
@@ -26949,7 +27385,7 @@ class Container extends Node {
           i.raws.before = sample.raws.before.replace(/\S/g, '')
         }
       }
-      i.parent = this
+      i.parent = this.proxyOf
       return i
     })
 
@@ -27030,10 +27466,14 @@ Container.registerAtRule = dependant => {
   AtRule = dependant
 }
 
+Container.registerRoot = dependant => {
+  Root = dependant
+}
+
 module.exports = Container
 Container.default = Container
 
-// istanbul ignore next
+/* c8 ignore start */
 Container.rebuild = node => {
   if (node.type === 'atrule') {
     Object.setPrototypeOf(node, AtRule.prototype)
@@ -27043,6 +27483,8 @@ Container.rebuild = node => {
     Object.setPrototypeOf(node, Declaration.prototype)
   } else if (node.type === 'comment') {
     Object.setPrototypeOf(node, Comment.prototype)
+  } else if (node.type === 'root') {
+    Object.setPrototypeOf(node, Root.prototype)
   }
 
   node[my] = true
@@ -27053,6 +27495,7 @@ Container.rebuild = node => {
     })
   }
 }
+/* c8 ignore stop */
 
 
 /***/ }),
@@ -27083,8 +27526,15 @@ class CssSyntaxError extends Error {
       this.plugin = plugin
     }
     if (typeof line !== 'undefined' && typeof column !== 'undefined') {
-      this.line = line
-      this.column = column
+      if (typeof line === 'number') {
+        this.line = line
+        this.column = column
+      } else {
+        this.line = line.line
+        this.column = line.column
+        this.endLine = column.line
+        this.endColumn = column.column
+      }
     }
 
     this.setMessage()
@@ -27302,7 +27752,7 @@ fromJSON.default = fromJSON
 let { SourceMapConsumer, SourceMapGenerator } = __webpack_require__(209)
 let { fileURLToPath, pathToFileURL } = __webpack_require__(7414)
 let { resolve, isAbsolute } = __webpack_require__(9830)
-let { nanoid } = __webpack_require__(2961)
+let { nanoid } = __webpack_require__(2618)
 
 let terminalHighlight = __webpack_require__(2868)
 let CssSyntaxError = __webpack_require__(2671)
@@ -27402,18 +27852,43 @@ class Input {
   }
 
   error(message, line, column, opts = {}) {
-    let result
-    if (!column) {
+    let result, endLine, endColumn
+
+    if (line && typeof line === 'object') {
+      let start = line
+      let end = column
+      if (typeof line.offset === 'number') {
+        let pos = this.fromOffset(start.offset)
+        line = pos.line
+        column = pos.col
+      } else {
+        line = start.line
+        column = start.column
+      }
+      if (typeof end.offset === 'number') {
+        let pos = this.fromOffset(end.offset)
+        endLine = pos.line
+        endColumn = pos.col
+      } else {
+        endLine = end.line
+        endColumn = end.column
+      }
+    } else if (!column) {
       let pos = this.fromOffset(line)
       line = pos.line
       column = pos.col
     }
-    let origin = this.origin(line, column)
+
+    let origin = this.origin(line, column, endLine, endColumn)
     if (origin) {
       result = new CssSyntaxError(
         message,
-        origin.line,
-        origin.column,
+        origin.endLine === undefined
+          ? origin.line
+          : { line: origin.line, column: origin.column },
+        origin.endLine === undefined
+          ? origin.column
+          : { line: origin.endLine, column: origin.endColumn },
         origin.source,
         origin.file,
         opts.plugin
@@ -27421,15 +27896,15 @@ class Input {
     } else {
       result = new CssSyntaxError(
         message,
-        line,
-        column,
+        endLine === undefined ? line : { line, column },
+        endLine === undefined ? column : { line: endLine, column: endColumn },
         this.css,
         this.file,
         opts.plugin
       )
     }
 
-    result.input = { line, column, source: this.css }
+    result.input = { line, column, endLine, endColumn, source: this.css }
     if (this.file) {
       if (pathToFileURL) {
         result.input.url = pathToFileURL(this.file).toString()
@@ -27440,12 +27915,17 @@ class Input {
     return result
   }
 
-  origin(line, column) {
+  origin(line, column, endLine, endColumn) {
     if (!this.map) return false
     let consumer = this.map.consumer()
 
     let from = consumer.originalPositionFor({ line, column })
     if (!from.source) return false
+
+    let to
+    if (typeof endLine === 'number') {
+      to = consumer.originalPositionFor({ line: endLine, column: endColumn })
+    }
 
     let fromUrl
 
@@ -27461,14 +27941,16 @@ class Input {
     let result = {
       url: fromUrl.toString(),
       line: from.line,
-      column: from.column
+      column: from.column,
+      endLine: to && to.line,
+      endColumn: to && to.column
     }
 
     if (fromUrl.protocol === 'file:') {
       if (fileURLToPath) {
         result.file = fileURLToPath(fromUrl)
       } else {
-        // istanbul ignore next
+        /* c8 ignore next 2 */
         throw new Error(`file: protocol is not available in this PostCSS build`)
       }
     }
@@ -27660,7 +28142,7 @@ class LazyResult {
       }
 
       if (root && !root[my]) {
-        // istanbul ignore next
+        /* c8 ignore next 2 */
         Container.rebuild(root)
       }
     }
@@ -27874,7 +28356,8 @@ class LazyResult {
         if (false) {}
       }
     } catch (err) {
-      // istanbul ignore next
+      /* c8 ignore next 3 */
+      // eslint-disable-next-line no-console
       if (console && console.error) console.error(err)
     }
     return error
@@ -28059,7 +28542,8 @@ let list = {
     let split = false
 
     let func = 0
-    let quote = false
+    let inQuote = false
+    let prevQuote = ''
     let escape = false
 
     for (let letter of string) {
@@ -28067,12 +28551,13 @@ let list = {
         escape = false
       } else if (letter === '\\') {
         escape = true
-      } else if (quote) {
-        if (letter === quote) {
-          quote = false
+      } else if (inQuote) {
+        if (letter === prevQuote) {
+          inQuote = false
         }
       } else if (letter === '"' || letter === "'") {
-        quote = letter
+        inQuote = true
+        prevQuote = letter
       } else if (letter === '(') {
         func += 1
       } else if (letter === ')') {
@@ -28120,15 +28605,19 @@ let { SourceMapConsumer, SourceMapGenerator } = __webpack_require__(209)
 let { dirname, resolve, relative, sep } = __webpack_require__(9830)
 let { pathToFileURL } = __webpack_require__(7414)
 
+let Input = __webpack_require__(5995)
+
 let sourceMapAvailable = Boolean(SourceMapConsumer && SourceMapGenerator)
 let pathAvailable = Boolean(dirname && resolve && relative && sep)
 
 class MapGenerator {
-  constructor(stringify, root, opts) {
+  constructor(stringify, root, opts, cssString) {
     this.stringify = stringify
     this.mapOpts = opts.map || {}
     this.root = root
     this.opts = opts
+    this.css = cssString
+    this.usesFileUrls = !this.mapOpts.from && this.mapOpts.absolute
   }
 
   isMap() {
@@ -28141,14 +28630,19 @@ class MapGenerator {
   previous() {
     if (!this.previousMaps) {
       this.previousMaps = []
-      this.root.walk(node => {
-        if (node.source && node.source.input.map) {
-          let map = node.source.input.map
-          if (!this.previousMaps.includes(map)) {
-            this.previousMaps.push(map)
+      if (this.root) {
+        this.root.walk(node => {
+          if (node.source && node.source.input.map) {
+            let map = node.source.input.map
+            if (!this.previousMaps.includes(map)) {
+              this.previousMaps.push(map)
+            }
           }
-        }
-      })
+        })
+      } else {
+        let input = new Input(this.css, this.opts)
+        if (input.map) this.previousMaps.push(input.map)
+      }
     }
 
     return this.previousMaps
@@ -28183,30 +28677,41 @@ class MapGenerator {
   clearAnnotation() {
     if (this.mapOpts.annotation === false) return
 
-    let node
-    for (let i = this.root.nodes.length - 1; i >= 0; i--) {
-      node = this.root.nodes[i]
-      if (node.type !== 'comment') continue
-      if (node.text.indexOf('# sourceMappingURL=') === 0) {
-        this.root.removeChild(i)
+    if (this.root) {
+      let node
+      for (let i = this.root.nodes.length - 1; i >= 0; i--) {
+        node = this.root.nodes[i]
+        if (node.type !== 'comment') continue
+        if (node.text.indexOf('# sourceMappingURL=') === 0) {
+          this.root.removeChild(i)
+        }
       }
+    } else if (this.css) {
+      this.css = this.css.replace(/(\n)?\/\*#[\S\s]*?\*\/$/gm, '')
     }
   }
 
   setSourcesContent() {
     let already = {}
-    this.root.walk(node => {
-      if (node.source) {
-        let from = node.source.input.from
-        if (from && !already[from]) {
-          already[from] = true
-          this.map.setSourceContent(
-            this.toUrl(this.path(from)),
-            node.source.input.css
-          )
+    if (this.root) {
+      this.root.walk(node => {
+        if (node.source) {
+          let from = node.source.input.from
+          if (from && !already[from]) {
+            already[from] = true
+            let fromUrl = this.usesFileUrls
+              ? this.toFileUrl(from)
+              : this.toUrl(this.path(from))
+            this.map.setSourceContent(fromUrl, node.source.input.css)
+          }
         }
-      }
-    })
+      })
+    } else if (this.css) {
+      let from = this.opts.from
+        ? this.toUrl(this.path(this.opts.from))
+        : '<no source>'
+      this.map.setSourceContent(from, this.css)
+    }
   }
 
   applyPrevMaps() {
@@ -28245,7 +28750,6 @@ class MapGenerator {
     if (Buffer) {
       return Buffer.from(str).toString('base64')
     } else {
-      // istanbul ignore next
       return window.btoa(unescape(encodeURIComponent(str)))
     }
   }
@@ -28263,7 +28767,6 @@ class MapGenerator {
     } else {
       content = this.outputFile() + '.map'
     }
-
     let eol = '\n'
     if (this.css.includes('\r\n')) eol = '\r\n'
 
@@ -28273,23 +28776,40 @@ class MapGenerator {
   outputFile() {
     if (this.opts.to) {
       return this.path(this.opts.to)
-    }
-    if (this.opts.from) {
+    } else if (this.opts.from) {
       return this.path(this.opts.from)
+    } else {
+      return 'to.css'
     }
-    return 'to.css'
   }
 
   generateMap() {
-    this.generateString()
+    if (this.root) {
+      this.generateString()
+    } else if (this.previous().length === 1) {
+      let prev = this.previous()[0].consumer()
+      prev.file = this.outputFile()
+      this.map = SourceMapGenerator.fromSourceMap(prev)
+    } else {
+      this.map = new SourceMapGenerator({ file: this.outputFile() })
+      this.map.addMapping({
+        source: this.opts.from
+          ? this.toUrl(this.path(this.opts.from))
+          : '<no source>',
+        generated: { line: 1, column: 0 },
+        original: { line: 1, column: 0 }
+      })
+    }
+
     if (this.isSourcesContent()) this.setSourcesContent()
-    if (this.previous().length > 0) this.applyPrevMaps()
+    if (this.root && this.previous().length > 0) this.applyPrevMaps()
     if (this.isAnnotation()) this.addAnnotation()
 
     if (this.isInline()) {
       return [this.css]
+    } else {
+      return [this.css, this.map]
     }
-    return [this.css, this.map]
   }
 
   path(file) {
@@ -28309,24 +28829,26 @@ class MapGenerator {
 
   toUrl(path) {
     if (sep === '\\') {
-      // istanbul ignore next
       path = path.replace(/\\/g, '/')
     }
     return encodeURI(path).replace(/[#?]/g, encodeURIComponent)
   }
 
+  toFileUrl(path) {
+    if (pathToFileURL) {
+      return pathToFileURL(path).toString()
+    } else {
+      throw new Error(
+        '`map.absolute` option is not available in this PostCSS build'
+      )
+    }
+  }
+
   sourcePath(node) {
     if (this.mapOpts.from) {
       return this.toUrl(this.mapOpts.from)
-    } else if (this.mapOpts.absolute) {
-      if (pathToFileURL) {
-        return pathToFileURL(node.source.input.from).toString()
-      } else {
-        // istanbul ignore next
-        throw new Error(
-          '`map.absolute` option is not available in this PostCSS build'
-        )
-      }
+    } else if (this.usesFileUrls) {
+      return this.toFileUrl(node.source.input.from)
     } else {
       return this.toUrl(this.path(node.source.input.from))
     }
@@ -28400,20 +28922,154 @@ class MapGenerator {
 
   generate() {
     this.clearAnnotation()
-
     if (pathAvailable && sourceMapAvailable && this.isMap()) {
       return this.generateMap()
+    } else {
+      let result = ''
+      this.stringify(this.root, i => {
+        result += i
+      })
+      return [result]
     }
-
-    let result = ''
-    this.stringify(this.root, i => {
-      result += i
-    })
-    return [result]
   }
 }
 
 module.exports = MapGenerator
+
+
+/***/ }),
+
+/***/ 7647:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+
+
+let MapGenerator = __webpack_require__(8505)
+let stringify = __webpack_require__(7088)
+let warnOnce = __webpack_require__(2448)
+let parse = __webpack_require__(6939)
+const Result = __webpack_require__(3632)
+
+class NoWorkResult {
+  constructor(processor, css, opts) {
+    css = css.toString()
+    this.stringified = false
+
+    this._processor = processor
+    this._css = css
+    this._opts = opts
+    this._map = undefined
+    let root
+
+    let str = stringify
+    this.result = new Result(this._processor, root, this._opts)
+    this.result.css = css
+
+    let self = this
+    Object.defineProperty(this.result, 'root', {
+      get() {
+        return self.root
+      }
+    })
+
+    let map = new MapGenerator(str, root, this._opts, css)
+    if (map.isMap()) {
+      let [generatedCSS, generatedMap] = map.generate()
+      if (generatedCSS) {
+        this.result.css = generatedCSS
+      }
+      if (generatedMap) {
+        this.result.map = generatedMap
+      }
+    }
+  }
+
+  get [Symbol.toStringTag]() {
+    return 'NoWorkResult'
+  }
+
+  get processor() {
+    return this.result.processor
+  }
+
+  get opts() {
+    return this.result.opts
+  }
+
+  get css() {
+    return this.result.css
+  }
+
+  get content() {
+    return this.result.css
+  }
+
+  get map() {
+    return this.result.map
+  }
+
+  get root() {
+    if (this._root) {
+      return this._root
+    }
+
+    let root
+    let parser = parse
+
+    try {
+      root = parser(this._css, this._opts)
+    } catch (error) {
+      this.error = error
+    }
+
+    if (this.error) {
+      throw this.error
+    } else {
+      this._root = root
+      return root
+    }
+  }
+
+  get messages() {
+    return []
+  }
+
+  warnings() {
+    return []
+  }
+
+  toString() {
+    return this._css
+  }
+
+  then(onFulfilled, onRejected) {
+    if (false) {}
+
+    return this.async().then(onFulfilled, onRejected)
+  }
+
+  catch(onRejected) {
+    return this.async().catch(onRejected)
+  }
+
+  finally(onFinally) {
+    return this.async().then(onFinally, onFinally)
+  }
+
+  async() {
+    if (this.error) return Promise.reject(this.error)
+    return Promise.resolve(this.result)
+  }
+
+  sync() {
+    if (this.error) throw this.error
+    return this.result
+  }
+}
+
+module.exports = NoWorkResult
+NoWorkResult.default = NoWorkResult
 
 
 /***/ }),
@@ -28434,7 +29090,7 @@ function cloneNode(obj, parent) {
 
   for (let i in obj) {
     if (!Object.prototype.hasOwnProperty.call(obj, i)) {
-      // istanbul ignore next
+      /* c8 ignore next 2 */
       continue
     }
     if (i === 'proxyCache') continue
@@ -28480,8 +29136,13 @@ class Node {
 
   error(message, opts = {}) {
     if (this.source) {
-      let pos = this.positionBy(opts)
-      return this.source.input.error(message, pos.line, pos.column, opts)
+      let { start, end } = this.rangeBy(opts)
+      return this.source.input.error(
+        message,
+        { line: start.line, column: start.column },
+        { line: end.line, column: end.column },
+        opts
+      )
     }
     return new CssSyntaxError(message)
   }
@@ -28608,7 +29269,7 @@ class Node {
 
     for (let name in this) {
       if (!Object.prototype.hasOwnProperty.call(this, name)) {
-        // istanbul ignore next
+        /* c8 ignore next 2 */
         continue
       }
       if (name === 'parent' || name === 'proxyCache') continue
@@ -28676,6 +29337,59 @@ class Node {
     return pos
   }
 
+  rangeBy(opts) {
+    let start = {
+      line: this.source.start.line,
+      column: this.source.start.column
+    }
+    let end = this.source.end
+      ? {
+          line: this.source.end.line,
+          column: this.source.end.column + 1
+        }
+      : {
+          line: start.line,
+          column: start.column + 1
+        }
+
+    if (opts.word) {
+      let index = this.toString().indexOf(opts.word)
+      if (index !== -1) {
+        start = this.positionInside(index)
+        end = this.positionInside(index + opts.word.length)
+      }
+    } else {
+      if (opts.start) {
+        start = {
+          line: opts.start.line,
+          column: opts.start.column
+        }
+      } else if (opts.index) {
+        start = this.positionInside(opts.index)
+      }
+
+      if (opts.end) {
+        end = {
+          line: opts.end.line,
+          column: opts.end.column
+        }
+      } else if (opts.endIndex) {
+        end = this.positionInside(opts.endIndex)
+      } else if (opts.index) {
+        end = this.positionInside(opts.index + 1)
+      }
+    }
+
+    if (
+      end.line < start.line ||
+      (end.line === start.line && end.column <= start.column)
+    ) {
+      end = { line: start.line, column: start.column + 1 }
+    }
+
+    return { start, end }
+  }
+
   getProxyProcessor() {
     return {
       set(node, prop, value) {
@@ -28687,6 +29401,7 @@ class Node {
           prop === 'name' ||
           prop === 'params' ||
           prop === 'important' ||
+          /* c8 ignore next */
           prop === 'text'
         ) {
           node.markDirty()
@@ -28789,6 +29504,19 @@ let Comment = __webpack_require__(7923)
 let AtRule = __webpack_require__(1353)
 let Root = __webpack_require__(1025)
 let Rule = __webpack_require__(1675)
+
+const SAFE_COMMENT_NEIGHBOR = {
+  empty: true,
+  space: true
+}
+
+function findLastWithPosition(tokens) {
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    let token = tokens[i]
+    let pos = token[3] || token[2]
+    if (pos) return pos
+  }
+}
 
 class Parser {
   constructor(input) {
@@ -28922,10 +29650,12 @@ class Parser {
     if (brackets.length > 0) this.unclosedBracket(bracket)
 
     if (end && colon) {
-      while (tokens.length) {
-        token = tokens[tokens.length - 1][0]
-        if (token !== 'space' && token !== 'comment') break
-        this.tokenizer.back(tokens.pop())
+      if (!customProperty) {
+        while (tokens.length) {
+          token = tokens[tokens.length - 1][0]
+          if (token !== 'space' && token !== 'comment') break
+          this.tokenizer.back(tokens.pop())
+        }
       }
       this.decl(tokens, customProperty)
     } else {
@@ -28953,7 +29683,10 @@ class Parser {
       this.semicolon = true
       tokens.pop()
     }
-    node.source.end = this.getPosition(last[3] || last[2])
+
+    node.source.end = this.getPosition(
+      last[3] || last[2] || findLastWithPosition(tokens)
+    )
 
     while (tokens[0][0] !== 'word') {
       if (tokens.length === 1) this.unknownWord(tokens)
@@ -28991,7 +29724,15 @@ class Parser {
       node.raws.before += node.prop[0]
       node.prop = node.prop.slice(1)
     }
-    let firstSpaces = this.spacesAndCommentsFromStart(tokens)
+
+    let firstSpaces = []
+    let next
+    while (tokens.length) {
+      next = tokens[0][0]
+      if (next !== 'space' && next !== 'comment') break
+      firstSpaces.push(tokens.shift())
+    }
+
     this.precheckMissedSemicolon(tokens)
 
     for (let i = tokens.length - 1; i >= 0; i--) {
@@ -29025,12 +29766,12 @@ class Parser {
     }
 
     let hasWord = tokens.some(i => i[0] !== 'space' && i[0] !== 'comment')
-    this.raw(node, 'value', tokens)
+
     if (hasWord) {
-      node.raws.between += firstSpaces
-    } else {
-      node.value = firstSpaces + node.value
+      node.raws.between += firstSpaces.map(i => i[1]).join('')
+      firstSpaces = []
     }
+    this.raw(node, 'value', firstSpaces.concat(tokens), customProperty)
 
     if (node.value.includes(':') && !customProperty) {
       this.checkMissedSemicolon(tokens)
@@ -29178,38 +29919,30 @@ class Parser {
     if (node.type !== 'comment') this.semicolon = false
   }
 
-  raw(node, prop, tokens) {
+  raw(node, prop, tokens, customProperty) {
     let token, type
     let length = tokens.length
     let value = ''
     let clean = true
     let next, prev
-    let pattern = /^([#.|])?(\w)+/i
 
     for (let i = 0; i < length; i += 1) {
       token = tokens[i]
       type = token[0]
-
-      if (type === 'comment' && node.type === 'rule') {
-        prev = tokens[i - 1]
-        next = tokens[i + 1]
-
-        if (
-          prev[0] !== 'space' &&
-          next[0] !== 'space' &&
-          pattern.test(prev[1]) &&
-          pattern.test(next[1])
-        ) {
-          value += token[1]
+      if (type === 'space' && i === length - 1 && !customProperty) {
+        clean = false
+      } else if (type === 'comment') {
+        prev = tokens[i - 1] ? tokens[i - 1][0] : 'empty'
+        next = tokens[i + 1] ? tokens[i + 1][0] : 'empty'
+        if (!SAFE_COMMENT_NEIGHBOR[prev] && !SAFE_COMMENT_NEIGHBOR[next]) {
+          if (value.slice(-1) === ',') {
+            clean = false
+          } else {
+            value += token[1]
+          }
         } else {
           clean = false
         }
-
-        continue
-      }
-
-      if (type === 'comment' || (type === 'space' && i === length - 1)) {
-        clean = false
       } else {
         value += token[1]
       }
@@ -29294,15 +30027,27 @@ class Parser {
   // Errors
 
   unclosedBracket(bracket) {
-    throw this.input.error('Unclosed bracket', bracket[2])
+    throw this.input.error(
+      'Unclosed bracket',
+      { offset: bracket[2] },
+      { offset: bracket[2] + 1 }
+    )
   }
 
   unknownWord(tokens) {
-    throw this.input.error('Unknown word', tokens[0][2])
+    throw this.input.error(
+      'Unknown word',
+      { offset: tokens[0][2] },
+      { offset: tokens[0][2] + tokens[0][1].length }
+    )
   }
 
   unexpectedClose(token) {
-    throw this.input.error('Unexpected }', token[2])
+    throw this.input.error(
+      'Unexpected }',
+      { offset: token[2] },
+      { offset: token[2] + 1 }
+    )
   }
 
   unclosedBlock() {
@@ -29311,11 +30056,19 @@ class Parser {
   }
 
   doubleColon(token) {
-    throw this.input.error('Double colon', token[2])
+    throw this.input.error(
+      'Double colon',
+      { offset: token[2] },
+      { offset: token[2] + token[1].length }
+    )
   }
 
   unnamedAtrule(node, token) {
-    throw this.input.error('At-rule without name', token[2])
+    throw this.input.error(
+      'At-rule without name',
+      { offset: token[2] },
+      { offset: token[2] + token[1].length }
+    )
   }
 
   precheckMissedSemicolon(/* tokens */) {
@@ -29383,22 +30136,27 @@ function postcss(...plugins) {
 }
 
 postcss.plugin = function plugin(name, initializer) {
-  if (console && console.warn) {
-    console.warn(
-      name +
-        ': postcss.plugin was deprecated. Migration guide:\n' +
-        'https://evilmartians.com/chronicles/postcss-8-plugin-migration'
-    )
-    if (process.env.LANG && process.env.LANG.startsWith('cn')) {
-      // istanbul ignore next
+  let warningPrinted = false
+  function creator(...args) {
+    // eslint-disable-next-line no-console
+    if (console && console.warn && !warningPrinted) {
+      warningPrinted = true
+      // eslint-disable-next-line no-console
       console.warn(
         name +
-          ': 里面 postcss.plugin 被弃用. 迁移指南:\n' +
-          'https://www.w3ctech.com/topic/2226'
+          ': postcss.plugin was deprecated. Migration guide:\n' +
+          'https://evilmartians.com/chronicles/postcss-8-plugin-migration'
       )
+      if (process.env.LANG && process.env.LANG.startsWith('cn')) {
+        /* c8 ignore next 7 */
+        // eslint-disable-next-line no-console
+        console.warn(
+          name +
+            ': 里面 postcss.plugin 被弃用. 迁移指南:\n' +
+            'https://www.w3ctech.com/topic/2226'
+        )
+      }
     }
-  }
-  function creator(...args) {
     let transformer = initializer(...args)
     transformer.postcssPlugin = name
     transformer.postcssVersion = new Processor().version
@@ -29435,6 +30193,7 @@ postcss.document = defaults => new Document(defaults)
 postcss.CssSyntaxError = CssSyntaxError
 postcss.Declaration = Declaration
 postcss.Container = Container
+postcss.Processor = Processor
 postcss.Document = Document
 postcss.Comment = Comment
 postcss.Warning = Warning
@@ -29467,7 +30226,7 @@ function fromBase64(str) {
   if (Buffer) {
     return Buffer.from(str, 'base64').toString()
   } else {
-    // istanbul ignore next
+    /* c8 ignore next 2 */
     return window.atob(str)
   }
 }
@@ -29609,13 +30368,14 @@ PreviousMap.default = PreviousMap
 "use strict";
 
 
+let NoWorkResult = __webpack_require__(7647)
 let LazyResult = __webpack_require__(1939)
 let Document = __webpack_require__(6461)
 let Root = __webpack_require__(1025)
 
 class Processor {
   constructor(plugins = []) {
-    this.version = '8.3.11'
+    this.version = '8.4.18'
     this.plugins = this.normalize(plugins)
   }
 
@@ -29629,12 +30389,12 @@ class Processor {
       this.plugins.length === 0 &&
       typeof opts.parser === 'undefined' &&
       typeof opts.stringifier === 'undefined' &&
-      typeof opts.syntax === 'undefined' &&
-      !opts.hideNothingWarning
+      typeof opts.syntax === 'undefined'
     ) {
-      if (false) {}
+      return new NoWorkResult(this, css, opts)
+    } else {
+      return new LazyResult(this, css, opts)
     }
-    return new LazyResult(this, css, opts)
   }
 
   normalize(plugins) {
@@ -29785,6 +30545,8 @@ Root.registerProcessor = dependant => {
 module.exports = Root
 Root.default = Root
 
+Container.registerRoot(Root)
+
 
 /***/ }),
 
@@ -29854,7 +30616,7 @@ class Stringifier {
   }
 
   stringify(node, semicolon) {
-    /* istanbul ignore if */
+    /* c8 ignore start */
     if (!this[node.type]) {
       throw new Error(
         'Unknown AST node type ' +
@@ -29863,6 +30625,7 @@ class Stringifier {
           'Maybe you need to change PostCSS stringifier.'
       )
     }
+    /* c8 ignore stop */
     this[node.type](node, semicolon)
   }
 
@@ -30178,6 +30941,7 @@ class Stringifier {
 }
 
 module.exports = Stringifier
+Stringifier.default = Stringifier
 
 
 /***/ }),
@@ -30492,6 +31256,7 @@ module.exports = function tokenizer(input, options = {}) {
 /***/ ((module) => {
 
 "use strict";
+/* eslint-disable no-console */
 
 
 let printed = {}
@@ -30520,9 +31285,11 @@ class Warning {
     this.text = text
 
     if (opts.node && opts.node.source) {
-      let pos = opts.node.positionBy(opts)
-      this.line = pos.line
-      this.column = pos.column
+      let range = opts.node.rangeBy(opts)
+      this.line = range.start.line
+      this.column = range.start.column
+      this.endLine = range.end.line
+      this.endColumn = range.end.column
     }
 
     for (let opt in opts) this[opt] = opts[opt]
@@ -31858,6 +32625,13 @@ module.exports = function (random, alphabet, size) {
 
 /***/ }),
 
+/***/ 4023:
+/***/ (function(module, __unused_webpack_exports, __webpack_require__) {
+
+!function(e,t){ true?module.exports=t():0}("undefined"!=typeof self?self:this,function(){return function(e){function t(r){if(n[r])return n[r].exports;var i=n[r]={i:r,l:!1,exports:{}};return e[r].call(i.exports,i,i.exports,t),i.l=!0,i.exports}var n={};return t.m=e,t.c=n,t.d=function(e,n,r){t.o(e,n)||Object.defineProperty(e,n,{configurable:!1,enumerable:!0,get:r})},t.n=function(e){var n=e&&e.__esModule?function(){return e.default}:function(){return e};return t.d(n,"a",n),n},t.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},t.p="",t(t.s=60)}([function(e,t){function n(e,t){var n=e[1]||"",i=e[3];if(!i)return n;if(t&&"function"==typeof btoa){var o=r(i);return[n].concat(i.sources.map(function(e){return"/*# sourceURL="+i.sourceRoot+e+" */"})).concat([o]).join("\n")}return[n].join("\n")}function r(e){return"/*# sourceMappingURL=data:application/json;charset=utf-8;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(e))))+" */"}e.exports=function(e){var t=[];return t.toString=function(){return this.map(function(t){var r=n(t,e);return t[2]?"@media "+t[2]+"{"+r+"}":r}).join("")},t.i=function(e,n){"string"==typeof e&&(e=[[null,e,""]]);for(var r={},i=0;i<this.length;i++){var o=this[i][0];"number"==typeof o&&(r[o]=!0)}for(i=0;i<e.length;i++){var a=e[i];"number"==typeof a[0]&&r[a[0]]||(n&&!a[2]?a[2]=n:n&&(a[2]="("+a[2]+") and ("+n+")"),t.push(a))}},t}},function(e,t,n){function r(e){for(var t=0;t<e.length;t++){var n=e[t],r=u[n.id];if(r){r.refs++;for(var i=0;i<r.parts.length;i++)r.parts[i](n.parts[i]);for(;i<n.parts.length;i++)r.parts.push(o(n.parts[i]));r.parts.length>n.parts.length&&(r.parts.length=n.parts.length)}else{for(var a=[],i=0;i<n.parts.length;i++)a.push(o(n.parts[i]));u[n.id]={id:n.id,refs:1,parts:a}}}}function i(){var e=document.createElement("style");return e.type="text/css",f.appendChild(e),e}function o(e){var t,n,r=document.querySelector("style["+b+'~="'+e.id+'"]');if(r){if(p)return v;r.parentNode.removeChild(r)}if(x){var o=h++;r=d||(d=i()),t=a.bind(null,r,o,!1),n=a.bind(null,r,o,!0)}else r=i(),t=s.bind(null,r),n=function(){r.parentNode.removeChild(r)};return t(e),function(r){if(r){if(r.css===e.css&&r.media===e.media&&r.sourceMap===e.sourceMap)return;t(e=r)}else n()}}function a(e,t,n,r){var i=n?"":r.css;if(e.styleSheet)e.styleSheet.cssText=m(t,i);else{var o=document.createTextNode(i),a=e.childNodes;a[t]&&e.removeChild(a[t]),a.length?e.insertBefore(o,a[t]):e.appendChild(o)}}function s(e,t){var n=t.css,r=t.media,i=t.sourceMap;if(r&&e.setAttribute("media",r),g.ssrId&&e.setAttribute(b,t.id),i&&(n+="\n/*# sourceURL="+i.sources[0]+" */",n+="\n/*# sourceMappingURL=data:application/json;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(i))))+" */"),e.styleSheet)e.styleSheet.cssText=n;else{for(;e.firstChild;)e.removeChild(e.firstChild);e.appendChild(document.createTextNode(n))}}var c="undefined"!=typeof document;if("undefined"!=typeof DEBUG&&DEBUG&&!c)throw new Error("vue-style-loader cannot be used in a non-browser environment. Use { target: 'node' } in your Webpack config to indicate a server-rendering environment.");var l=n(64),u={},f=c&&(document.head||document.getElementsByTagName("head")[0]),d=null,h=0,p=!1,v=function(){},g=null,b="data-vue-ssr-id",x="undefined"!=typeof navigator&&/msie [6-9]\b/.test(navigator.userAgent.toLowerCase());e.exports=function(e,t,n,i){p=n,g=i||{};var o=l(e,t);return r(o),function(t){for(var n=[],i=0;i<o.length;i++){var a=o[i],s=u[a.id];s.refs--,n.push(s)}t?(o=l(e,t),r(o)):o=[];for(var i=0;i<n.length;i++){var s=n[i];if(0===s.refs){for(var c=0;c<s.parts.length;c++)s.parts[c]();delete u[s.id]}}}};var m=function(){var e=[];return function(t,n){return e[t]=n,e.filter(Boolean).join("\n")}}()},function(e,t){e.exports=function(e,t,n,r,i,o){var a,s=e=e||{},c=typeof e.default;"object"!==c&&"function"!==c||(a=e,s=e.default);var l="function"==typeof s?s.options:s;t&&(l.render=t.render,l.staticRenderFns=t.staticRenderFns,l._compiled=!0),n&&(l.functional=!0),i&&(l._scopeId=i);var u;if(o?(u=function(e){e=e||this.$vnode&&this.$vnode.ssrContext||this.parent&&this.parent.$vnode&&this.parent.$vnode.ssrContext,e||"undefined"==typeof __VUE_SSR_CONTEXT__||(e=__VUE_SSR_CONTEXT__),r&&r.call(this,e),e&&e._registeredComponents&&e._registeredComponents.add(o)},l._ssrRegister=u):r&&(u=r),u){var f=l.functional,d=f?l.render:l.beforeCreate;f?(l._injectStyles=u,l.render=function(e,t){return u.call(t),d(e,t)}):l.beforeCreate=d?[].concat(d,u):[u]}return{esModule:a,exports:s,options:l}}},function(e,t,n){"use strict";function r(e,t){var n,r=e&&e.a;!(n=e&&e.hsl?(0,o.default)(e.hsl):e&&e.hex&&e.hex.length>0?(0,o.default)(e.hex):e&&e.hsv?(0,o.default)(e.hsv):e&&e.rgba?(0,o.default)(e.rgba):e&&e.rgb?(0,o.default)(e.rgb):(0,o.default)(e))||void 0!==n._a&&null!==n._a||n.setAlpha(r||1);var i=n.toHsl(),a=n.toHsv();return 0===i.s&&(a.h=i.h=e.h||e.hsl&&e.hsl.h||t||0),{hsl:i,hex:n.toHexString().toUpperCase(),hex8:n.toHex8String().toUpperCase(),rgba:n.toRgb(),hsv:a,oldHue:e.h||t||i.h,source:e.source,a:e.a||n.getAlpha()}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(65),o=function(e){return e&&e.__esModule?e:{default:e}}(i);t.default={props:["value"],data:function(){return{val:r(this.value)}},computed:{colors:{get:function(){return this.val},set:function(e){this.val=e,this.$emit("input",e)}}},watch:{value:function(e){this.val=r(e)}},methods:{colorChange:function(e,t){this.oldHue=this.colors.hsl.h,this.colors=r(e,t||this.oldHue)},isValidHex:function(e){return(0,o.default)(e).isValid()},simpleCheckForValidColor:function(e){for(var t=["r","g","b","a","h","s","l","v"],n=0,r=0,i=0;i<t.length;i++){var o=t[i];e[o]&&(n++,isNaN(e[o])||r++)}if(n===r)return e},paletteUpperCase:function(e){return e.map(function(e){return e.toUpperCase()})},isTransparent:function(e){return 0===(0,o.default)(e).getAlpha()}}}},function(e,t){var n=e.exports="undefined"!=typeof window&&window.Math==Math?window:"undefined"!=typeof self&&self.Math==Math?self:Function("return this")();"number"==typeof __g&&(__g=n)},function(e,t,n){"use strict";function r(e){c||n(66)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(36),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(68),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/common/EditableInput.vue",t.default=f.exports},function(e,t){var n={}.hasOwnProperty;e.exports=function(e,t){return n.call(e,t)}},function(e,t,n){var r=n(8),i=n(18);e.exports=n(9)?function(e,t,n){return r.f(e,t,i(1,n))}:function(e,t,n){return e[t]=n,e}},function(e,t,n){var r=n(16),i=n(42),o=n(25),a=Object.defineProperty;t.f=n(9)?Object.defineProperty:function(e,t,n){if(r(e),t=o(t,!0),r(n),i)try{return a(e,t,n)}catch(e){}if("get"in n||"set"in n)throw TypeError("Accessors not supported!");return"value"in n&&(e[t]=n.value),e}},function(e,t,n){e.exports=!n(17)(function(){return 7!=Object.defineProperty({},"a",{get:function(){return 7}}).a})},function(e,t,n){var r=n(90),i=n(24);e.exports=function(e){return r(i(e))}},function(e,t,n){var r=n(29)("wks"),i=n(19),o=n(4).Symbol,a="function"==typeof o;(e.exports=function(e){return r[e]||(r[e]=a&&o[e]||(a?o:i)("Symbol."+e))}).store=r},function(e,t){e.exports=function(e){return"object"==typeof e?null!==e:"function"==typeof e}},function(e,t,n){"use strict";function r(e){c||n(111)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(51),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(113),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/common/Hue.vue",t.default=f.exports},function(e,t){e.exports=!0},function(e,t){var n=e.exports={version:"2.6.11"};"number"==typeof __e&&(__e=n)},function(e,t,n){var r=n(12);e.exports=function(e){if(!r(e))throw TypeError(e+" is not an object!");return e}},function(e,t){e.exports=function(e){try{return!!e()}catch(e){return!0}}},function(e,t){e.exports=function(e,t){return{enumerable:!(1&e),configurable:!(2&e),writable:!(4&e),value:t}}},function(e,t){var n=0,r=Math.random();e.exports=function(e){return"Symbol(".concat(void 0===e?"":e,")_",(++n+r).toString(36))}},function(e,t,n){"use strict";function r(e){c||n(123)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(54),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(127),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/common/Saturation.vue",t.default=f.exports},function(e,t,n){"use strict";function r(e){c||n(128)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(55),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(133),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/common/Alpha.vue",t.default=f.exports},function(e,t,n){"use strict";function r(e){c||n(130)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(56),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(132),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/common/Checkboard.vue",t.default=f.exports},function(e,t){var n=Math.ceil,r=Math.floor;e.exports=function(e){return isNaN(e=+e)?0:(e>0?r:n)(e)}},function(e,t){e.exports=function(e){if(void 0==e)throw TypeError("Can't call method on  "+e);return e}},function(e,t,n){var r=n(12);e.exports=function(e,t){if(!r(e))return e;var n,i;if(t&&"function"==typeof(n=e.toString)&&!r(i=n.call(e)))return i;if("function"==typeof(n=e.valueOf)&&!r(i=n.call(e)))return i;if(!t&&"function"==typeof(n=e.toString)&&!r(i=n.call(e)))return i;throw TypeError("Can't convert object to primitive value")}},function(e,t){e.exports={}},function(e,t,n){var r=n(46),i=n(30);e.exports=Object.keys||function(e){return r(e,i)}},function(e,t,n){var r=n(29)("keys"),i=n(19);e.exports=function(e){return r[e]||(r[e]=i(e))}},function(e,t,n){var r=n(15),i=n(4),o=i["__core-js_shared__"]||(i["__core-js_shared__"]={});(e.exports=function(e,t){return o[e]||(o[e]=void 0!==t?t:{})})("versions",[]).push({version:r.version,mode:n(14)?"pure":"global",copyright:"© 2019 Denis Pushkarev (zloirock.ru)"})},function(e,t){e.exports="constructor,hasOwnProperty,isPrototypeOf,propertyIsEnumerable,toLocaleString,toString,valueOf".split(",")},function(e,t,n){var r=n(8).f,i=n(6),o=n(11)("toStringTag");e.exports=function(e,t,n){e&&!i(e=n?e:e.prototype,o)&&r(e,o,{configurable:!0,value:t})}},function(e,t,n){t.f=n(11)},function(e,t,n){var r=n(4),i=n(15),o=n(14),a=n(32),s=n(8).f;e.exports=function(e){var t=i.Symbol||(i.Symbol=o?{}:r.Symbol||{});"_"==e.charAt(0)||e in t||s(t,e,{value:a.f(e)})}},function(e,t){t.f={}.propertyIsEnumerable},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(3),o=r(i),a=n(5),s=r(a),c=["#4D4D4D","#999999","#FFFFFF","#F44E3B","#FE9200","#FCDC00","#DBDF00","#A4DD00","#68CCCA","#73D8FF","#AEA1FF","#FDA1FF","#333333","#808080","#CCCCCC","#D33115","#E27300","#FCC400","#B0BC00","#68BC00","#16A5A5","#009CE0","#7B64FF","#FA28FF","#000000","#666666","#B3B3B3","#9F0500","#C45100","#FB9E00","#808900","#194D33","#0C797D","#0062B1","#653294","#AB149E"];t.default={name:"Compact",mixins:[o.default],props:{palette:{type:Array,default:function(){return c}}},components:{"ed-in":s.default},computed:{pick:function(){return this.colors.hex.toUpperCase()}},methods:{handlerClick:function(e){this.colorChange({hex:e,source:"hex"})}}}},function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default={name:"editableInput",props:{label:String,labelText:String,desc:String,value:[String,Number],max:Number,min:Number,arrowOffset:{type:Number,default:1}},computed:{val:{get:function(){return this.value},set:function(e){if(!(void 0!==this.max&&+e>this.max))return e;this.$refs.input.value=this.max}},labelId:function(){return"input__label__"+this.label+"__"+Math.random().toString().slice(2,5)},labelSpanText:function(){return this.labelText||this.label}},methods:{update:function(e){this.handleChange(e.target.value)},handleChange:function(e){var t={};t[this.label]=e,void 0===t.hex&&void 0===t["#"]?this.$emit("change",t):e.length>5&&this.$emit("change",t)},handleKeyDown:function(e){var t=this.val,n=Number(t);if(n){var r=this.arrowOffset||1;38===e.keyCode&&(t=n+r,this.handleChange(t),e.preventDefault()),40===e.keyCode&&(t=n-r,this.handleChange(t),e.preventDefault())}}}}},function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0});var r=n(3),i=function(e){return e&&e.__esModule?e:{default:e}}(r),o=["#FFFFFF","#F2F2F2","#E6E6E6","#D9D9D9","#CCCCCC","#BFBFBF","#B3B3B3","#A6A6A6","#999999","#8C8C8C","#808080","#737373","#666666","#595959","#4D4D4D","#404040","#333333","#262626","#0D0D0D","#000000"];t.default={name:"Grayscale",mixins:[i.default],props:{palette:{type:Array,default:function(){return o}}},components:{},computed:{pick:function(){return this.colors.hex.toUpperCase()}},methods:{handlerClick:function(e){this.colorChange({hex:e,source:"hex"})}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(5),o=r(i),a=n(3),s=r(a);t.default={name:"Material",mixins:[s.default],components:{"ed-in":o.default},methods:{onChange:function(e){e&&(e.hex?this.isValidHex(e.hex)&&this.colorChange({hex:e.hex,source:"hex"}):(e.r||e.g||e.b)&&this.colorChange({r:e.r||this.colors.rgba.r,g:e.g||this.colors.rgba.g,b:e.b||this.colors.rgba.b,a:e.a||this.colors.rgba.a,source:"rgba"}))}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(81),o=r(i),a=n(3),s=r(a),c=n(13),l=r(c);t.default={name:"Slider",mixins:[s.default],props:{swatches:{type:Array,default:function(){return[{s:.5,l:.8},{s:.5,l:.65},{s:.5,l:.5},{s:.5,l:.35},{s:.5,l:.2}]}}},components:{hue:l.default},computed:{normalizedSwatches:function(){return this.swatches.map(function(e){return"object"!==(void 0===e?"undefined":(0,o.default)(e))?{s:.5,l:e}:e})}},methods:{isActive:function(e,t){var n=this.colors.hsl;return 1===n.l&&1===e.l||(0===n.l&&0===e.l||Math.abs(n.l-e.l)<.01&&Math.abs(n.s-e.s)<.01)},hueChange:function(e){this.colorChange(e)},handleSwClick:function(e,t){this.colorChange({h:this.colors.hsl.h,s:t.s,l:t.l,source:"hsl"})}}}},function(e,t,n){"use strict";var r=n(14),i=n(41),o=n(44),a=n(7),s=n(26),c=n(88),l=n(31),u=n(95),f=n(11)("iterator"),d=!([].keys&&"next"in[].keys()),h=function(){return this};e.exports=function(e,t,n,p,v,g,b){c(n,t,p);var x,m,_,w=function(e){if(!d&&e in F)return F[e];switch(e){case"keys":case"values":return function(){return new n(this,e)}}return function(){return new n(this,e)}},y=t+" Iterator",C="values"==v,k=!1,F=e.prototype,S=F[f]||F["@@iterator"]||v&&F[v],A=S||w(v),O=v?C?w("entries"):A:void 0,E="Array"==t?F.entries||S:S;if(E&&(_=u(E.call(new e)))!==Object.prototype&&_.next&&(l(_,y,!0),r||"function"==typeof _[f]||a(_,f,h)),C&&S&&"values"!==S.name&&(k=!0,A=function(){return S.call(this)}),r&&!b||!d&&!k&&F[f]||a(F,f,A),s[t]=A,s[y]=h,v)if(x={values:C?A:w("values"),keys:g?A:w("keys"),entries:O},b)for(m in x)m in F||o(F,m,x[m]);else i(i.P+i.F*(d||k),t,x);return x}},function(e,t,n){var r=n(4),i=n(15),o=n(86),a=n(7),s=n(6),c=function(e,t,n){var l,u,f,d=e&c.F,h=e&c.G,p=e&c.S,v=e&c.P,g=e&c.B,b=e&c.W,x=h?i:i[t]||(i[t]={}),m=x.prototype,_=h?r:p?r[t]:(r[t]||{}).prototype;h&&(n=t);for(l in n)(u=!d&&_&&void 0!==_[l])&&s(x,l)||(f=u?_[l]:n[l],x[l]=h&&"function"!=typeof _[l]?n[l]:g&&u?o(f,r):b&&_[l]==f?function(e){var t=function(t,n,r){if(this instanceof e){switch(arguments.length){case 0:return new e;case 1:return new e(t);case 2:return new e(t,n)}return new e(t,n,r)}return e.apply(this,arguments)};return t.prototype=e.prototype,t}(f):v&&"function"==typeof f?o(Function.call,f):f,v&&((x.virtual||(x.virtual={}))[l]=f,e&c.R&&m&&!m[l]&&a(m,l,f)))};c.F=1,c.G=2,c.S=4,c.P=8,c.B=16,c.W=32,c.U=64,c.R=128,e.exports=c},function(e,t,n){e.exports=!n(9)&&!n(17)(function(){return 7!=Object.defineProperty(n(43)("div"),"a",{get:function(){return 7}}).a})},function(e,t,n){var r=n(12),i=n(4).document,o=r(i)&&r(i.createElement);e.exports=function(e){return o?i.createElement(e):{}}},function(e,t,n){e.exports=n(7)},function(e,t,n){var r=n(16),i=n(89),o=n(30),a=n(28)("IE_PROTO"),s=function(){},c=function(){var e,t=n(43)("iframe"),r=o.length;for(t.style.display="none",n(94).appendChild(t),t.src="javascript:",e=t.contentWindow.document,e.open(),e.write("<script>document.F=Object<\/script>"),e.close(),c=e.F;r--;)delete c.prototype[o[r]];return c()};e.exports=Object.create||function(e,t){var n;return null!==e?(s.prototype=r(e),n=new s,s.prototype=null,n[a]=e):n=c(),void 0===t?n:i(n,t)}},function(e,t,n){var r=n(6),i=n(10),o=n(91)(!1),a=n(28)("IE_PROTO");e.exports=function(e,t){var n,s=i(e),c=0,l=[];for(n in s)n!=a&&r(s,n)&&l.push(n);for(;t.length>c;)r(s,n=t[c++])&&(~o(l,n)||l.push(n));return l}},function(e,t){var n={}.toString;e.exports=function(e){return n.call(e).slice(8,-1)}},function(e,t,n){var r=n(24);e.exports=function(e){return Object(r(e))}},function(e,t){t.f=Object.getOwnPropertySymbols},function(e,t,n){var r=n(46),i=n(30).concat("length","prototype");t.f=Object.getOwnPropertyNames||function(e){return r(e,i)}},function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default={name:"Hue",props:{value:Object,direction:{type:String,default:"horizontal"}},data:function(){return{oldHue:0,pullDirection:""}},computed:{colors:function(){var e=this.value.hsl.h;return 0!==e&&e-this.oldHue>0&&(this.pullDirection="right"),0!==e&&e-this.oldHue<0&&(this.pullDirection="left"),this.oldHue=e,this.value},directionClass:function(){return{"vc-hue--horizontal":"horizontal"===this.direction,"vc-hue--vertical":"vertical"===this.direction}},pointerTop:function(){return"vertical"===this.direction?0===this.colors.hsl.h&&"right"===this.pullDirection?0:-100*this.colors.hsl.h/360+100+"%":0},pointerLeft:function(){return"vertical"===this.direction?0:0===this.colors.hsl.h&&"right"===this.pullDirection?"100%":100*this.colors.hsl.h/360+"%"}},methods:{handleChange:function(e,t){!t&&e.preventDefault();var n=this.$refs.container;if(n){var r,i,o=n.clientWidth,a=n.clientHeight,s=n.getBoundingClientRect().left+window.pageXOffset,c=n.getBoundingClientRect().top+window.pageYOffset,l=e.pageX||(e.touches?e.touches[0].pageX:0),u=e.pageY||(e.touches?e.touches[0].pageY:0),f=l-s,d=u-c;"vertical"===this.direction?(d<0?r=360:d>a?r=0:(i=-100*d/a+100,r=360*i/100),this.colors.hsl.h!==r&&this.$emit("change",{h:r,s:this.colors.hsl.s,l:this.colors.hsl.l,a:this.colors.hsl.a,source:"hsl"})):(f<0?r=0:f>o?r=360:(i=100*f/o,r=360*i/100),this.colors.hsl.h!==r&&this.$emit("change",{h:r,s:this.colors.hsl.s,l:this.colors.hsl.l,a:this.colors.hsl.a,source:"hsl"}))}},handleMouseDown:function(e){this.handleChange(e,!0),window.addEventListener("mousemove",this.handleChange),window.addEventListener("mouseup",this.handleMouseUp)},handleMouseUp:function(e){this.unbindEventListeners()},unbindEventListeners:function(){window.removeEventListener("mousemove",this.handleChange),window.removeEventListener("mouseup",this.handleMouseUp)}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(118),o=r(i),a=n(3),s=r(a),c=["red","pink","purple","deepPurple","indigo","blue","lightBlue","cyan","teal","green","lightGreen","lime","yellow","amber","orange","deepOrange","brown","blueGrey","black"],l=["900","700","500","300","100"],u=function(){var e=[];return c.forEach(function(t){var n=[];"black"===t.toLowerCase()||"white"===t.toLowerCase()?n=n.concat(["#000000","#FFFFFF"]):l.forEach(function(e){var r=o.default[t][e];n.push(r.toUpperCase())}),e.push(n)}),e}();t.default={name:"Swatches",mixins:[s.default],props:{palette:{type:Array,default:function(){return u}}},computed:{pick:function(){return this.colors.hex}},methods:{equal:function(e){return e.toLowerCase()===this.colors.hex.toLowerCase()},handlerClick:function(e){this.colorChange({hex:e,source:"hex"})}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(3),o=r(i),a=n(5),s=r(a),c=n(20),l=r(c),u=n(13),f=r(u),d=n(21),h=r(d);t.default={name:"Photoshop",mixins:[o.default],props:{head:{type:String,default:"Color Picker"},disableFields:{type:Boolean,default:!1},hasResetButton:{type:Boolean,default:!1},acceptLabel:{type:String,default:"OK"},cancelLabel:{type:String,default:"Cancel"},resetLabel:{type:String,default:"Reset"},newLabel:{type:String,default:"new"},currentLabel:{type:String,default:"current"}},components:{saturation:l.default,hue:f.default,alpha:h.default,"ed-in":s.default},data:function(){return{currentColor:"#FFF"}},computed:{hsv:function(){var e=this.colors.hsv;return{h:e.h.toFixed(),s:(100*e.s).toFixed(),v:(100*e.v).toFixed()}},hex:function(){var e=this.colors.hex;return e&&e.replace("#","")}},created:function(){this.currentColor=this.colors.hex},methods:{childChange:function(e){this.colorChange(e)},inputChange:function(e){e&&(e["#"]?this.isValidHex(e["#"])&&this.colorChange({hex:e["#"],source:"hex"}):e.r||e.g||e.b||e.a?this.colorChange({r:e.r||this.colors.rgba.r,g:e.g||this.colors.rgba.g,b:e.b||this.colors.rgba.b,a:e.a||this.colors.rgba.a,source:"rgba"}):(e.h||e.s||e.v)&&this.colorChange({h:e.h||this.colors.hsv.h,s:e.s/100||this.colors.hsv.s,v:e.v/100||this.colors.hsv.v,source:"hsv"}))},clickCurrentColor:function(){this.colorChange({hex:this.currentColor,source:"hex"})},handleAccept:function(){this.$emit("ok")},handleCancel:function(){this.$emit("cancel")},handleReset:function(){this.$emit("reset")}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(125),o=r(i),a=n(126),s=r(a);t.default={name:"Saturation",props:{value:Object},computed:{colors:function(){return this.value},bgColor:function(){return"hsl("+this.colors.hsv.h+", 100%, 50%)"},pointerTop:function(){return-100*this.colors.hsv.v+1+100+"%"},pointerLeft:function(){return 100*this.colors.hsv.s+"%"}},methods:{throttle:(0,s.default)(function(e,t){e(t)},20,{leading:!0,trailing:!1}),handleChange:function(e,t){!t&&e.preventDefault();var n=this.$refs.container;if(n){var r=n.clientWidth,i=n.clientHeight,a=n.getBoundingClientRect().left+window.pageXOffset,s=n.getBoundingClientRect().top+window.pageYOffset,c=e.pageX||(e.touches?e.touches[0].pageX:0),l=e.pageY||(e.touches?e.touches[0].pageY:0),u=(0,o.default)(c-a,0,r),f=(0,o.default)(l-s,0,i),d=u/r,h=(0,o.default)(-f/i+1,0,1);this.throttle(this.onChange,{h:this.colors.hsv.h,s:d,v:h,a:this.colors.hsv.a,source:"hsva"})}},onChange:function(e){this.$emit("change",e)},handleMouseDown:function(e){window.addEventListener("mousemove",this.handleChange),window.addEventListener("mouseup",this.handleChange),window.addEventListener("mouseup",this.handleMouseUp)},handleMouseUp:function(e){this.unbindEventListeners()},unbindEventListeners:function(){window.removeEventListener("mousemove",this.handleChange),window.removeEventListener("mouseup",this.handleChange),window.removeEventListener("mouseup",this.handleMouseUp)}}}},function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0});var r=n(22),i=function(e){return e&&e.__esModule?e:{default:e}}(r);t.default={name:"Alpha",props:{value:Object,onChange:Function},components:{checkboard:i.default},computed:{colors:function(){return this.value},gradientColor:function(){var e=this.colors.rgba,t=[e.r,e.g,e.b].join(",");return"linear-gradient(to right, rgba("+t+", 0) 0%, rgba("+t+", 1) 100%)"}},methods:{handleChange:function(e,t){!t&&e.preventDefault();var n=this.$refs.container;if(n){var r,i=n.clientWidth,o=n.getBoundingClientRect().left+window.pageXOffset,a=e.pageX||(e.touches?e.touches[0].pageX:0),s=a-o;r=s<0?0:s>i?1:Math.round(100*s/i)/100,this.colors.a!==r&&this.$emit("change",{h:this.colors.hsl.h,s:this.colors.hsl.s,l:this.colors.hsl.l,a:r,source:"rgba"})}},handleMouseDown:function(e){this.handleChange(e,!0),window.addEventListener("mousemove",this.handleChange),window.addEventListener("mouseup",this.handleMouseUp)},handleMouseUp:function(){this.unbindEventListeners()},unbindEventListeners:function(){window.removeEventListener("mousemove",this.handleChange),window.removeEventListener("mouseup",this.handleMouseUp)}}}},function(e,t,n){"use strict";function r(e,t,n){if("undefined"==typeof document)return null;var r=document.createElement("canvas");r.width=r.height=2*n;var i=r.getContext("2d");return i?(i.fillStyle=e,i.fillRect(0,0,r.width,r.height),i.fillStyle=t,i.fillRect(0,0,n,n),i.translate(n,n),i.fillRect(0,0,n,n),r.toDataURL()):null}function i(e,t,n){var i=e+","+t+","+n;if(o[i])return o[i];var a=r(e,t,n);return o[i]=a,a}Object.defineProperty(t,"__esModule",{value:!0});var o={};t.default={name:"Checkboard",props:{size:{type:[Number,String],default:8},white:{type:String,default:"#fff"},grey:{type:String,default:"#e6e6e6"}},computed:{bgStyle:function(){return{"background-image":"url("+i(this.white,this.grey,this.size)+")"}}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(3),o=r(i),a=n(5),s=r(a),c=n(20),l=r(c),u=n(13),f=r(u),d=n(21),h=r(d),p=n(22),v=r(p),g=["#D0021B","#F5A623","#F8E71C","#8B572A","#7ED321","#417505","#BD10E0","#9013FE","#4A90E2","#50E3C2","#B8E986","#000000","#4A4A4A","#9B9B9B","#FFFFFF","rgba(0,0,0,0)"];t.default={name:"Sketch",mixins:[o.default],components:{saturation:l.default,hue:f.default,alpha:h.default,"ed-in":s.default,checkboard:v.default},props:{presetColors:{type:Array,default:function(){return g}},disableAlpha:{type:Boolean,default:!1},disableFields:{type:Boolean,default:!1}},computed:{hex:function(){var e=void 0;return e=this.colors.a<1?this.colors.hex8:this.colors.hex,e.replace("#","")},activeColor:function(){var e=this.colors.rgba;return"rgba("+[e.r,e.g,e.b,e.a].join(",")+")"}},methods:{handlePreset:function(e){this.colorChange({hex:e,source:"hex"})},childChange:function(e){this.colorChange(e)},inputChange:function(e){e&&(e.hex?this.isValidHex(e.hex)&&this.colorChange({hex:e.hex,source:"hex"}):(e.r||e.g||e.b||e.a)&&this.colorChange({r:e.r||this.colors.rgba.r,g:e.g||this.colors.rgba.g,b:e.b||this.colors.rgba.b,a:e.a||this.colors.rgba.a,source:"rgba"}))}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(3),o=r(i),a=n(5),s=r(a),c=n(20),l=r(c),u=n(13),f=r(u),d=n(21),h=r(d),p=n(22),v=r(p);t.default={name:"Chrome",mixins:[o.default],props:{disableAlpha:{type:Boolean,default:!1},disableFields:{type:Boolean,default:!1}},components:{saturation:l.default,hue:f.default,alpha:h.default,"ed-in":s.default,checkboard:v.default},data:function(){return{fieldsIndex:0,highlight:!1}},computed:{hsl:function(){var e=this.colors.hsl,t=e.h,n=e.s,r=e.l;return{h:t.toFixed(),s:(100*n).toFixed()+"%",l:(100*r).toFixed()+"%"}},activeColor:function(){var e=this.colors.rgba;return"rgba("+[e.r,e.g,e.b,e.a].join(",")+")"},hasAlpha:function(){return this.colors.a<1}},methods:{childChange:function(e){this.colorChange(e)},inputChange:function(e){if(e)if(e.hex)this.isValidHex(e.hex)&&this.colorChange({hex:e.hex,source:"hex"});else if(e.r||e.g||e.b||e.a)this.colorChange({r:e.r||this.colors.rgba.r,g:e.g||this.colors.rgba.g,b:e.b||this.colors.rgba.b,a:e.a||this.colors.rgba.a,source:"rgba"});else if(e.h||e.s||e.l){var t=e.s?e.s.replace("%","")/100:this.colors.hsl.s,n=e.l?e.l.replace("%","")/100:this.colors.hsl.l;this.colorChange({h:e.h||this.colors.hsl.h,s:t,l:n,source:"hsl"})}},toggleViews:function(){if(this.fieldsIndex>=2)return void(this.fieldsIndex=0);this.fieldsIndex++},showHighlight:function(){this.highlight=!0},hideHighlight:function(){this.highlight=!1}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(5),o=r(i),a=n(3),s=r(a),c=["#FF6900","#FCB900","#7BDCB5","#00D084","#8ED1FC","#0693E3","#ABB8C3","#EB144C","#F78DA7","#9900EF"];t.default={name:"Twitter",mixins:[s.default],components:{editableInput:o.default},props:{width:{type:[String,Number],default:276},defaultColors:{type:Array,default:function(){return c}},triangle:{default:"top-left",validator:function(e){return["hide","top-left","top-right"].includes(e)}}},computed:{hsv:function(){var e=this.colors.hsv;return{h:e.h.toFixed(),s:(100*e.s).toFixed(),v:(100*e.v).toFixed()}},hex:function(){var e=this.colors.hex;return e&&e.replace("#","")}},methods:{equal:function(e){return e.toLowerCase()===this.colors.hex.toLowerCase()},handlerClick:function(e){this.colorChange({hex:e,source:"hex"})},inputChange:function(e){e&&(e["#"]?this.isValidHex(e["#"])&&this.colorChange({hex:e["#"],source:"hex"}):e.r||e.g||e.b||e.a?this.colorChange({r:e.r||this.colors.rgba.r,g:e.g||this.colors.rgba.g,b:e.b||this.colors.rgba.b,a:e.a||this.colors.rgba.a,source:"rgba"}):(e.h||e.s||e.v)&&this.colorChange({h:e.h||this.colors.hsv.h,s:e.s/100||this.colors.hsv.s,v:e.v/100||this.colors.hsv.v,source:"hsv"}))}}}},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}var i=n(61),o=r(i),a=n(70),s=r(a),c=n(74),l=r(c),u=n(78),f=r(u),d=n(115),h=r(d),p=n(120),v=r(p),g=n(135),b=r(g),x=n(139),m=r(x),_=n(143),w=r(_),y=n(21),C=r(y),k=n(22),F=r(k),S=n(5),A=r(S),O=n(13),E=r(O),M=n(20),j=r(M),L=n(3),P=r(L),R={version:"2.8.1",Compact:o.default,Grayscale:s.default,Twitter:w.default,Material:l.default,Slider:f.default,Swatches:h.default,Photoshop:v.default,Sketch:b.default,Chrome:m.default,Alpha:C.default,Checkboard:F.default,EditableInput:A.default,Hue:E.default,Saturation:j.default,ColorMixin:P.default};e.exports=R},function(e,t,n){"use strict";function r(e){c||n(62)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(35),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(69),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Compact.vue",t.default=f.exports},function(e,t,n){var r=n(63);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("6ce8a5a8",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-compact {\n  padding-top: 5px;\n  padding-left: 5px;\n  width: 245px;\n  border-radius: 2px;\n  box-sizing: border-box;\n  box-shadow: 0 2px 10px rgba(0,0,0,.12), 0 2px 5px rgba(0,0,0,.16);\n  background-color: #fff;\n}\n.vc-compact-colors {\n  overflow: hidden;\n  padding: 0;\n  margin: 0;\n}\n.vc-compact-color-item {\n  list-style: none;\n  width: 15px;\n  height: 15px;\n  float: left;\n  margin-right: 5px;\n  margin-bottom: 5px;\n  position: relative;\n  cursor: pointer;\n}\n.vc-compact-color-item--white {\n  box-shadow: inset 0 0 0 1px #ddd;\n}\n.vc-compact-color-item--white .vc-compact-dot {\n  background: #000;\n}\n.vc-compact-dot {\n  position: absolute;\n  top: 5px;\n  right: 5px;\n  bottom: 5px;\n  left: 5px;\n  border-radius: 50%;\n  opacity: 1;\n  background: #fff;\n}\n",""])},function(e,t){e.exports=function(e,t){for(var n=[],r={},i=0;i<t.length;i++){var o=t[i],a=o[0],s=o[1],c=o[2],l=o[3],u={id:e+":"+i,css:s,media:c,sourceMap:l};r[a]?r[a].parts.push(u):n.push(r[a]={id:a,parts:[u]})}return n}},function(e,t,n){var r;!function(i){function o(e,t){if(e=e||"",t=t||{},e instanceof o)return e;if(!(this instanceof o))return new o(e,t);var n=a(e);this._originalInput=e,this._r=n.r,this._g=n.g,this._b=n.b,this._a=n.a,this._roundA=G(100*this._a)/100,this._format=t.format||n.format,this._gradientType=t.gradientType,this._r<1&&(this._r=G(this._r)),this._g<1&&(this._g=G(this._g)),this._b<1&&(this._b=G(this._b)),this._ok=n.ok,this._tc_id=U++}function a(e){var t={r:0,g:0,b:0},n=1,r=null,i=null,o=null,a=!1,c=!1;return"string"==typeof e&&(e=N(e)),"object"==typeof e&&(H(e.r)&&H(e.g)&&H(e.b)?(t=s(e.r,e.g,e.b),a=!0,c="%"===String(e.r).substr(-1)?"prgb":"rgb"):H(e.h)&&H(e.s)&&H(e.v)?(r=D(e.s),i=D(e.v),t=f(e.h,r,i),a=!0,c="hsv"):H(e.h)&&H(e.s)&&H(e.l)&&(r=D(e.s),o=D(e.l),t=l(e.h,r,o),a=!0,c="hsl"),e.hasOwnProperty("a")&&(n=e.a)),n=O(n),{ok:a,format:e.format||c,r:V(255,q(t.r,0)),g:V(255,q(t.g,0)),b:V(255,q(t.b,0)),a:n}}function s(e,t,n){return{r:255*E(e,255),g:255*E(t,255),b:255*E(n,255)}}function c(e,t,n){e=E(e,255),t=E(t,255),n=E(n,255);var r,i,o=q(e,t,n),a=V(e,t,n),s=(o+a)/2;if(o==a)r=i=0;else{var c=o-a;switch(i=s>.5?c/(2-o-a):c/(o+a),o){case e:r=(t-n)/c+(t<n?6:0);break;case t:r=(n-e)/c+2;break;case n:r=(e-t)/c+4}r/=6}return{h:r,s:i,l:s}}function l(e,t,n){function r(e,t,n){return n<0&&(n+=1),n>1&&(n-=1),n<1/6?e+6*(t-e)*n:n<.5?t:n<2/3?e+(t-e)*(2/3-n)*6:e}var i,o,a;if(e=E(e,360),t=E(t,100),n=E(n,100),0===t)i=o=a=n;else{var s=n<.5?n*(1+t):n+t-n*t,c=2*n-s;i=r(c,s,e+1/3),o=r(c,s,e),a=r(c,s,e-1/3)}return{r:255*i,g:255*o,b:255*a}}function u(e,t,n){e=E(e,255),t=E(t,255),n=E(n,255);var r,i,o=q(e,t,n),a=V(e,t,n),s=o,c=o-a;if(i=0===o?0:c/o,o==a)r=0;else{switch(o){case e:r=(t-n)/c+(t<n?6:0);break;case t:r=(n-e)/c+2;break;case n:r=(e-t)/c+4}r/=6}return{h:r,s:i,v:s}}function f(e,t,n){e=6*E(e,360),t=E(t,100),n=E(n,100);var r=i.floor(e),o=e-r,a=n*(1-t),s=n*(1-o*t),c=n*(1-(1-o)*t),l=r%6;return{r:255*[n,s,a,a,c,n][l],g:255*[c,n,n,s,a,a][l],b:255*[a,a,c,n,n,s][l]}}function d(e,t,n,r){var i=[R(G(e).toString(16)),R(G(t).toString(16)),R(G(n).toString(16))];return r&&i[0].charAt(0)==i[0].charAt(1)&&i[1].charAt(0)==i[1].charAt(1)&&i[2].charAt(0)==i[2].charAt(1)?i[0].charAt(0)+i[1].charAt(0)+i[2].charAt(0):i.join("")}function h(e,t,n,r,i){var o=[R(G(e).toString(16)),R(G(t).toString(16)),R(G(n).toString(16)),R(B(r))];return i&&o[0].charAt(0)==o[0].charAt(1)&&o[1].charAt(0)==o[1].charAt(1)&&o[2].charAt(0)==o[2].charAt(1)&&o[3].charAt(0)==o[3].charAt(1)?o[0].charAt(0)+o[1].charAt(0)+o[2].charAt(0)+o[3].charAt(0):o.join("")}function p(e,t,n,r){return[R(B(r)),R(G(e).toString(16)),R(G(t).toString(16)),R(G(n).toString(16))].join("")}function v(e,t){t=0===t?0:t||10;var n=o(e).toHsl();return n.s-=t/100,n.s=M(n.s),o(n)}function g(e,t){t=0===t?0:t||10;var n=o(e).toHsl();return n.s+=t/100,n.s=M(n.s),o(n)}function b(e){return o(e).desaturate(100)}function x(e,t){t=0===t?0:t||10;var n=o(e).toHsl();return n.l+=t/100,n.l=M(n.l),o(n)}function m(e,t){t=0===t?0:t||10;var n=o(e).toRgb();return n.r=q(0,V(255,n.r-G(-t/100*255))),n.g=q(0,V(255,n.g-G(-t/100*255))),n.b=q(0,V(255,n.b-G(-t/100*255))),o(n)}function _(e,t){t=0===t?0:t||10;var n=o(e).toHsl();return n.l-=t/100,n.l=M(n.l),o(n)}function w(e,t){var n=o(e).toHsl(),r=(n.h+t)%360;return n.h=r<0?360+r:r,o(n)}function y(e){var t=o(e).toHsl();return t.h=(t.h+180)%360,o(t)}function C(e){var t=o(e).toHsl(),n=t.h;return[o(e),o({h:(n+120)%360,s:t.s,l:t.l}),o({h:(n+240)%360,s:t.s,l:t.l})]}function k(e){var t=o(e).toHsl(),n=t.h;return[o(e),o({h:(n+90)%360,s:t.s,l:t.l}),o({h:(n+180)%360,s:t.s,l:t.l}),o({h:(n+270)%360,s:t.s,l:t.l})]}function F(e){var t=o(e).toHsl(),n=t.h;return[o(e),o({h:(n+72)%360,s:t.s,l:t.l}),o({h:(n+216)%360,s:t.s,l:t.l})]}function S(e,t,n){t=t||6,n=n||30;var r=o(e).toHsl(),i=360/n,a=[o(e)];for(r.h=(r.h-(i*t>>1)+720)%360;--t;)r.h=(r.h+i)%360,a.push(o(r));return a}function A(e,t){t=t||6;for(var n=o(e).toHsv(),r=n.h,i=n.s,a=n.v,s=[],c=1/t;t--;)s.push(o({h:r,s:i,v:a})),a=(a+c)%1;return s}function O(e){return e=parseFloat(e),(isNaN(e)||e<0||e>1)&&(e=1),e}function E(e,t){L(e)&&(e="100%");var n=P(e);return e=V(t,q(0,parseFloat(e))),n&&(e=parseInt(e*t,10)/100),i.abs(e-t)<1e-6?1:e%t/parseFloat(t)}function M(e){return V(1,q(0,e))}function j(e){return parseInt(e,16)}function L(e){return"string"==typeof e&&-1!=e.indexOf(".")&&1===parseFloat(e)}function P(e){return"string"==typeof e&&-1!=e.indexOf("%")}function R(e){return 1==e.length?"0"+e:""+e}function D(e){return e<=1&&(e=100*e+"%"),e}function B(e){return i.round(255*parseFloat(e)).toString(16)}function T(e){return j(e)/255}function H(e){return!!J.CSS_UNIT.exec(e)}function N(e){e=e.replace(I,"").replace($,"").toLowerCase();var t=!1;if(W[e])e=W[e],t=!0;else if("transparent"==e)return{r:0,g:0,b:0,a:0,format:"name"};var n;return(n=J.rgb.exec(e))?{r:n[1],g:n[2],b:n[3]}:(n=J.rgba.exec(e))?{r:n[1],g:n[2],b:n[3],a:n[4]}:(n=J.hsl.exec(e))?{h:n[1],s:n[2],l:n[3]}:(n=J.hsla.exec(e))?{h:n[1],s:n[2],l:n[3],a:n[4]}:(n=J.hsv.exec(e))?{h:n[1],s:n[2],v:n[3]}:(n=J.hsva.exec(e))?{h:n[1],s:n[2],v:n[3],a:n[4]}:(n=J.hex8.exec(e))?{r:j(n[1]),g:j(n[2]),b:j(n[3]),a:T(n[4]),format:t?"name":"hex8"}:(n=J.hex6.exec(e))?{r:j(n[1]),g:j(n[2]),b:j(n[3]),format:t?"name":"hex"}:(n=J.hex4.exec(e))?{r:j(n[1]+""+n[1]),g:j(n[2]+""+n[2]),b:j(n[3]+""+n[3]),a:T(n[4]+""+n[4]),format:t?"name":"hex8"}:!!(n=J.hex3.exec(e))&&{r:j(n[1]+""+n[1]),g:j(n[2]+""+n[2]),b:j(n[3]+""+n[3]),format:t?"name":"hex"}}function z(e){var t,n;return e=e||{level:"AA",size:"small"},t=(e.level||"AA").toUpperCase(),n=(e.size||"small").toLowerCase(),"AA"!==t&&"AAA"!==t&&(t="AA"),"small"!==n&&"large"!==n&&(n="small"),{level:t,size:n}}var I=/^\s+/,$=/\s+$/,U=0,G=i.round,V=i.min,q=i.max,X=i.random;o.prototype={isDark:function(){return this.getBrightness()<128},isLight:function(){return!this.isDark()},isValid:function(){return this._ok},getOriginalInput:function(){return this._originalInput},getFormat:function(){return this._format},getAlpha:function(){return this._a},getBrightness:function(){var e=this.toRgb();return(299*e.r+587*e.g+114*e.b)/1e3},getLuminance:function(){var e,t,n,r,o,a,s=this.toRgb();return e=s.r/255,t=s.g/255,n=s.b/255,r=e<=.03928?e/12.92:i.pow((e+.055)/1.055,2.4),o=t<=.03928?t/12.92:i.pow((t+.055)/1.055,2.4),a=n<=.03928?n/12.92:i.pow((n+.055)/1.055,2.4),.2126*r+.7152*o+.0722*a},setAlpha:function(e){return this._a=O(e),this._roundA=G(100*this._a)/100,this},toHsv:function(){var e=u(this._r,this._g,this._b);return{h:360*e.h,s:e.s,v:e.v,a:this._a}},toHsvString:function(){var e=u(this._r,this._g,this._b),t=G(360*e.h),n=G(100*e.s),r=G(100*e.v);return 1==this._a?"hsv("+t+", "+n+"%, "+r+"%)":"hsva("+t+", "+n+"%, "+r+"%, "+this._roundA+")"},toHsl:function(){var e=c(this._r,this._g,this._b);return{h:360*e.h,s:e.s,l:e.l,a:this._a}},toHslString:function(){var e=c(this._r,this._g,this._b),t=G(360*e.h),n=G(100*e.s),r=G(100*e.l);return 1==this._a?"hsl("+t+", "+n+"%, "+r+"%)":"hsla("+t+", "+n+"%, "+r+"%, "+this._roundA+")"},toHex:function(e){return d(this._r,this._g,this._b,e)},toHexString:function(e){return"#"+this.toHex(e)},toHex8:function(e){return h(this._r,this._g,this._b,this._a,e)},toHex8String:function(e){return"#"+this.toHex8(e)},toRgb:function(){return{r:G(this._r),g:G(this._g),b:G(this._b),a:this._a}},toRgbString:function(){return 1==this._a?"rgb("+G(this._r)+", "+G(this._g)+", "+G(this._b)+")":"rgba("+G(this._r)+", "+G(this._g)+", "+G(this._b)+", "+this._roundA+")"},toPercentageRgb:function(){return{r:G(100*E(this._r,255))+"%",g:G(100*E(this._g,255))+"%",b:G(100*E(this._b,255))+"%",a:this._a}},toPercentageRgbString:function(){return 1==this._a?"rgb("+G(100*E(this._r,255))+"%, "+G(100*E(this._g,255))+"%, "+G(100*E(this._b,255))+"%)":"rgba("+G(100*E(this._r,255))+"%, "+G(100*E(this._g,255))+"%, "+G(100*E(this._b,255))+"%, "+this._roundA+")"},toName:function(){return 0===this._a?"transparent":!(this._a<1)&&(Y[d(this._r,this._g,this._b,!0)]||!1)},toFilter:function(e){var t="#"+p(this._r,this._g,this._b,this._a),n=t,r=this._gradientType?"GradientType = 1, ":"";if(e){var i=o(e);n="#"+p(i._r,i._g,i._b,i._a)}return"progid:DXImageTransform.Microsoft.gradient("+r+"startColorstr="+t+",endColorstr="+n+")"},toString:function(e){var t=!!e;e=e||this._format;var n=!1,r=this._a<1&&this._a>=0;return t||!r||"hex"!==e&&"hex6"!==e&&"hex3"!==e&&"hex4"!==e&&"hex8"!==e&&"name"!==e?("rgb"===e&&(n=this.toRgbString()),"prgb"===e&&(n=this.toPercentageRgbString()),"hex"!==e&&"hex6"!==e||(n=this.toHexString()),"hex3"===e&&(n=this.toHexString(!0)),"hex4"===e&&(n=this.toHex8String(!0)),"hex8"===e&&(n=this.toHex8String()),"name"===e&&(n=this.toName()),"hsl"===e&&(n=this.toHslString()),"hsv"===e&&(n=this.toHsvString()),n||this.toHexString()):"name"===e&&0===this._a?this.toName():this.toRgbString()},clone:function(){return o(this.toString())},_applyModification:function(e,t){var n=e.apply(null,[this].concat([].slice.call(t)));return this._r=n._r,this._g=n._g,this._b=n._b,this.setAlpha(n._a),this},lighten:function(){return this._applyModification(x,arguments)},brighten:function(){return this._applyModification(m,arguments)},darken:function(){return this._applyModification(_,arguments)},desaturate:function(){return this._applyModification(v,arguments)},saturate:function(){return this._applyModification(g,arguments)},greyscale:function(){return this._applyModification(b,arguments)},spin:function(){return this._applyModification(w,arguments)},_applyCombination:function(e,t){return e.apply(null,[this].concat([].slice.call(t)))},analogous:function(){return this._applyCombination(S,arguments)},complement:function(){return this._applyCombination(y,arguments)},monochromatic:function(){return this._applyCombination(A,arguments)},splitcomplement:function(){return this._applyCombination(F,arguments)},triad:function(){return this._applyCombination(C,arguments)},tetrad:function(){return this._applyCombination(k,arguments)}},o.fromRatio=function(e,t){if("object"==typeof e){var n={};for(var r in e)e.hasOwnProperty(r)&&(n[r]="a"===r?e[r]:D(e[r]));e=n}return o(e,t)},o.equals=function(e,t){return!(!e||!t)&&o(e).toRgbString()==o(t).toRgbString()},o.random=function(){return o.fromRatio({r:X(),g:X(),b:X()})},o.mix=function(e,t,n){n=0===n?0:n||50;var r=o(e).toRgb(),i=o(t).toRgb(),a=n/100;return o({r:(i.r-r.r)*a+r.r,g:(i.g-r.g)*a+r.g,b:(i.b-r.b)*a+r.b,a:(i.a-r.a)*a+r.a})},o.readability=function(e,t){var n=o(e),r=o(t);return(i.max(n.getLuminance(),r.getLuminance())+.05)/(i.min(n.getLuminance(),r.getLuminance())+.05)},o.isReadable=function(e,t,n){var r,i,a=o.readability(e,t);switch(i=!1,r=z(n),r.level+r.size){case"AAsmall":case"AAAlarge":i=a>=4.5;break;case"AAlarge":i=a>=3;break;case"AAAsmall":i=a>=7}return i},o.mostReadable=function(e,t,n){var r,i,a,s,c=null,l=0;n=n||{},i=n.includeFallbackColors,a=n.level,s=n.size;for(var u=0;u<t.length;u++)(r=o.readability(e,t[u]))>l&&(l=r,c=o(t[u]));return o.isReadable(e,c,{level:a,size:s})||!i?c:(n.includeFallbackColors=!1,o.mostReadable(e,["#fff","#000"],n))};var W=o.names={aliceblue:"f0f8ff",antiquewhite:"faebd7",aqua:"0ff",aquamarine:"7fffd4",azure:"f0ffff",beige:"f5f5dc",bisque:"ffe4c4",black:"000",blanchedalmond:"ffebcd",blue:"00f",blueviolet:"8a2be2",brown:"a52a2a",burlywood:"deb887",burntsienna:"ea7e5d",cadetblue:"5f9ea0",chartreuse:"7fff00",chocolate:"d2691e",coral:"ff7f50",cornflowerblue:"6495ed",cornsilk:"fff8dc",crimson:"dc143c",cyan:"0ff",darkblue:"00008b",darkcyan:"008b8b",darkgoldenrod:"b8860b",darkgray:"a9a9a9",darkgreen:"006400",darkgrey:"a9a9a9",darkkhaki:"bdb76b",darkmagenta:"8b008b",darkolivegreen:"556b2f",darkorange:"ff8c00",darkorchid:"9932cc",darkred:"8b0000",darksalmon:"e9967a",darkseagreen:"8fbc8f",darkslateblue:"483d8b",darkslategray:"2f4f4f",darkslategrey:"2f4f4f",darkturquoise:"00ced1",darkviolet:"9400d3",deeppink:"ff1493",deepskyblue:"00bfff",dimgray:"696969",dimgrey:"696969",dodgerblue:"1e90ff",firebrick:"b22222",floralwhite:"fffaf0",forestgreen:"228b22",fuchsia:"f0f",gainsboro:"dcdcdc",ghostwhite:"f8f8ff",gold:"ffd700",goldenrod:"daa520",gray:"808080",green:"008000",greenyellow:"adff2f",grey:"808080",honeydew:"f0fff0",hotpink:"ff69b4",indianred:"cd5c5c",indigo:"4b0082",ivory:"fffff0",khaki:"f0e68c",lavender:"e6e6fa",lavenderblush:"fff0f5",lawngreen:"7cfc00",lemonchiffon:"fffacd",lightblue:"add8e6",lightcoral:"f08080",lightcyan:"e0ffff",lightgoldenrodyellow:"fafad2",lightgray:"d3d3d3",lightgreen:"90ee90",lightgrey:"d3d3d3",lightpink:"ffb6c1",lightsalmon:"ffa07a",lightseagreen:"20b2aa",lightskyblue:"87cefa",lightslategray:"789",lightslategrey:"789",lightsteelblue:"b0c4de",lightyellow:"ffffe0",lime:"0f0",limegreen:"32cd32",linen:"faf0e6",magenta:"f0f",maroon:"800000",mediumaquamarine:"66cdaa",mediumblue:"0000cd",mediumorchid:"ba55d3",mediumpurple:"9370db",mediumseagreen:"3cb371",mediumslateblue:"7b68ee",mediumspringgreen:"00fa9a",mediumturquoise:"48d1cc",mediumvioletred:"c71585",midnightblue:"191970",mintcream:"f5fffa",mistyrose:"ffe4e1",moccasin:"ffe4b5",navajowhite:"ffdead",navy:"000080",oldlace:"fdf5e6",olive:"808000",olivedrab:"6b8e23",orange:"ffa500",orangered:"ff4500",orchid:"da70d6",palegoldenrod:"eee8aa",palegreen:"98fb98",paleturquoise:"afeeee",palevioletred:"db7093",papayawhip:"ffefd5",peachpuff:"ffdab9",peru:"cd853f",pink:"ffc0cb",plum:"dda0dd",powderblue:"b0e0e6",purple:"800080",rebeccapurple:"663399",red:"f00",rosybrown:"bc8f8f",royalblue:"4169e1",saddlebrown:"8b4513",salmon:"fa8072",sandybrown:"f4a460",seagreen:"2e8b57",seashell:"fff5ee",sienna:"a0522d",silver:"c0c0c0",skyblue:"87ceeb",slateblue:"6a5acd",slategray:"708090",slategrey:"708090",snow:"fffafa",springgreen:"00ff7f",steelblue:"4682b4",tan:"d2b48c",teal:"008080",thistle:"d8bfd8",tomato:"ff6347",turquoise:"40e0d0",violet:"ee82ee",wheat:"f5deb3",white:"fff",whitesmoke:"f5f5f5",yellow:"ff0",yellowgreen:"9acd32"},Y=o.hexNames=function(e){var t={};for(var n in e)e.hasOwnProperty(n)&&(t[e[n]]=n);return t}(W),J=function(){var e="(?:[-\\+]?\\d*\\.\\d+%?)|(?:[-\\+]?\\d+%?)",t="[\\s|\\(]+("+e+")[,|\\s]+("+e+")[,|\\s]+("+e+")\\s*\\)?",n="[\\s|\\(]+("+e+")[,|\\s]+("+e+")[,|\\s]+("+e+")[,|\\s]+("+e+")\\s*\\)?";return{CSS_UNIT:new RegExp(e),rgb:new RegExp("rgb"+t),rgba:new RegExp("rgba"+n),hsl:new RegExp("hsl"+t),hsla:new RegExp("hsla"+n),hsv:new RegExp("hsv"+t),hsva:new RegExp("hsva"+n),hex3:/^#?([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})$/,hex6:/^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,hex4:/^#?([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})([0-9a-fA-F]{1})$/,hex8:/^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/}}();void 0!==e&&e.exports?e.exports=o:void 0!==(r=function(){return o}.call(t,n,t,e))&&(e.exports=r)}(Math)},function(e,t,n){var r=n(67);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("0f73e73c",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-editable-input {\n  position: relative;\n}\n.vc-input__input {\n  padding: 0;\n  border: 0;\n  outline: none;\n}\n.vc-input__label {\n  text-transform: capitalize;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-editable-input"},[n("input",{directives:[{name:"model",rawName:"v-model",value:e.val,expression:"val"}],ref:"input",staticClass:"vc-input__input",attrs:{"aria-labelledby":e.labelId},domProps:{value:e.val},on:{keydown:e.handleKeyDown,input:[function(t){t.target.composing||(e.val=t.target.value)},e.update]}}),e._v(" "),n("span",{staticClass:"vc-input__label",attrs:{for:e.label,id:e.labelId}},[e._v(e._s(e.labelSpanText))]),e._v(" "),n("span",{staticClass:"vc-input__desc"},[e._v(e._s(e.desc))])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-compact",attrs:{role:"application","aria-label":"Compact color picker"}},[n("ul",{staticClass:"vc-compact-colors",attrs:{role:"listbox"}},e._l(e.paletteUpperCase(e.palette),function(t){return n("li",{key:t,staticClass:"vc-compact-color-item",class:{"vc-compact-color-item--white":"#FFFFFF"===t},style:{background:t},attrs:{role:"option","aria-label":"color:"+t,"aria-selected":t===e.pick},on:{click:function(n){return e.handlerClick(t)}}},[n("div",{directives:[{name:"show",rawName:"v-show",value:t===e.pick,expression:"c === pick"}],staticClass:"vc-compact-dot"})])}),0)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(71)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(37),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(73),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Grayscale.vue",t.default=f.exports},function(e,t,n){var r=n(72);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("21ddbb74",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-grayscale {\n  width: 125px;\n  border-radius: 2px;\n  box-shadow: 0 2px 15px rgba(0,0,0,.12), 0 2px 10px rgba(0,0,0,.16);\n  background-color: #fff;\n}\n.vc-grayscale-colors {\n  border-radius: 2px;\n  overflow: hidden;\n  padding: 0;\n  margin: 0;\n}\n.vc-grayscale-color-item {\n  list-style: none;\n  width: 25px;\n  height: 25px;\n  float: left;\n  position: relative;\n  cursor: pointer;\n}\n.vc-grayscale-color-item--white .vc-grayscale-dot {\n  background: #000;\n}\n.vc-grayscale-dot {\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  width: 6px;\n  height: 6px;\n  margin: -3px 0 0 -2px;\n  border-radius: 50%;\n  opacity: 1;\n  background: #fff;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-grayscale",attrs:{role:"application","aria-label":"Grayscale color picker"}},[n("ul",{staticClass:"vc-grayscale-colors",attrs:{role:"listbox"}},e._l(e.paletteUpperCase(e.palette),function(t){return n("li",{key:t,staticClass:"vc-grayscale-color-item",class:{"vc-grayscale-color-item--white":"#FFFFFF"==t},style:{background:t},attrs:{role:"option","aria-label":"Color:"+t,"aria-selected":t===e.pick},on:{click:function(n){return e.handlerClick(t)}}},[n("div",{directives:[{name:"show",rawName:"v-show",value:t===e.pick,expression:"c === pick"}],staticClass:"vc-grayscale-dot"})])}),0)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(75)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(38),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(77),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Material.vue",t.default=f.exports},function(e,t,n){var r=n(76);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("1ff3af73",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,'\n.vc-material {\n  width: 98px;\n  height: 98px;\n  padding: 16px;\n  font-family: "Roboto";\n  position: relative;\n  border-radius: 2px;\n  box-shadow: 0 2px 10px rgba(0,0,0,.12), 0 2px 5px rgba(0,0,0,.16);\n  background-color: #fff;\n}\n.vc-material .vc-input__input {\n  width: 100%;\n  margin-top: 12px;\n  font-size: 15px;\n  color: #333;\n  height: 30px;\n}\n.vc-material .vc-input__label {\n  position: absolute;\n  top: 0;\n  left: 0;\n  font-size: 11px;\n  color: #999;\n  text-transform: capitalize;\n}\n.vc-material-hex {\n  border-bottom-width: 2px;\n  border-bottom-style: solid;\n}\n.vc-material-split {\n  display: flex;\n  margin-right: -10px;\n  padding-top: 11px;\n}\n.vc-material-third {\n  flex: 1;\n  padding-right: 10px;\n}\n',""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-material",attrs:{role:"application","aria-label":"Material color picker"}},[n("ed-in",{staticClass:"vc-material-hex",style:{borderColor:e.colors.hex},attrs:{label:"hex"},on:{change:e.onChange},model:{value:e.colors.hex,callback:function(t){e.$set(e.colors,"hex",t)},expression:"colors.hex"}}),e._v(" "),n("div",{staticClass:"vc-material-split"},[n("div",{staticClass:"vc-material-third"},[n("ed-in",{attrs:{label:"r"},on:{change:e.onChange},model:{value:e.colors.rgba.r,callback:function(t){e.$set(e.colors.rgba,"r",t)},expression:"colors.rgba.r"}})],1),e._v(" "),n("div",{staticClass:"vc-material-third"},[n("ed-in",{attrs:{label:"g"},on:{change:e.onChange},model:{value:e.colors.rgba.g,callback:function(t){e.$set(e.colors.rgba,"g",t)},expression:"colors.rgba.g"}})],1),e._v(" "),n("div",{staticClass:"vc-material-third"},[n("ed-in",{attrs:{label:"b"},on:{change:e.onChange},model:{value:e.colors.rgba.b,callback:function(t){e.$set(e.colors.rgba,"b",t)},expression:"colors.rgba.b"}})],1)])],1)},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(79)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(39),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(114),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Slider.vue",t.default=f.exports},function(e,t,n){var r=n(80);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("7982aa43",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-slider {\n  position: relative;\n  width: 410px;\n}\n.vc-slider-hue-warp {\n  height: 12px;\n  position: relative;\n}\n.vc-slider-hue-warp .vc-hue-picker {\n  width: 14px;\n  height: 14px;\n  border-radius: 6px;\n  transform: translate(-7px, -2px);\n  background-color: rgb(248, 248, 248);\n  box-shadow: 0 1px 4px 0 rgba(0, 0, 0, 0.37);\n}\n.vc-slider-swatches {\n  display: flex;\n  margin-top: 20px;\n}\n.vc-slider-swatch {\n  margin-right: 1px;\n  flex: 1;\n  width: 20%;\n}\n.vc-slider-swatch:first-child {\n  margin-right: 1px;\n}\n.vc-slider-swatch:first-child .vc-slider-swatch-picker {\n  border-radius: 2px 0px 0px 2px;\n}\n.vc-slider-swatch:last-child {\n  margin-right: 0;\n}\n.vc-slider-swatch:last-child .vc-slider-swatch-picker {\n  border-radius: 0px 2px 2px 0px;\n}\n.vc-slider-swatch-picker {\n  cursor: pointer;\n  height: 12px;\n}\n.vc-slider-swatch:nth-child(n) .vc-slider-swatch-picker.vc-slider-swatch-picker--active {\n  transform: scaleY(1.8);\n  border-radius: 3.6px/2px;\n}\n.vc-slider-swatch-picker--white {\n  box-shadow: inset 0 0 0 1px #ddd;\n}\n.vc-slider-swatch-picker--active.vc-slider-swatch-picker--white {\n  box-shadow: inset 0 0 0 0.6px #ddd;\n}\n",""])},function(e,t,n){"use strict";function r(e){return e&&e.__esModule?e:{default:e}}t.__esModule=!0;var i=n(82),o=r(i),a=n(100),s=r(a),c="function"==typeof s.default&&"symbol"==typeof o.default?function(e){return typeof e}:function(e){return e&&"function"==typeof s.default&&e.constructor===s.default&&e!==s.default.prototype?"symbol":typeof e};t.default="function"==typeof s.default&&"symbol"===c(o.default)?function(e){return void 0===e?"undefined":c(e)}:function(e){return e&&"function"==typeof s.default&&e.constructor===s.default&&e!==s.default.prototype?"symbol":void 0===e?"undefined":c(e)}},function(e,t,n){e.exports={default:n(83),__esModule:!0}},function(e,t,n){n(84),n(96),e.exports=n(32).f("iterator")},function(e,t,n){"use strict";var r=n(85)(!0);n(40)(String,"String",function(e){this._t=String(e),this._i=0},function(){var e,t=this._t,n=this._i;return n>=t.length?{value:void 0,done:!0}:(e=r(t,n),this._i+=e.length,{value:e,done:!1})})},function(e,t,n){var r=n(23),i=n(24);e.exports=function(e){return function(t,n){var o,a,s=String(i(t)),c=r(n),l=s.length;return c<0||c>=l?e?"":void 0:(o=s.charCodeAt(c),o<55296||o>56319||c+1===l||(a=s.charCodeAt(c+1))<56320||a>57343?e?s.charAt(c):o:e?s.slice(c,c+2):a-56320+(o-55296<<10)+65536)}}},function(e,t,n){var r=n(87);e.exports=function(e,t,n){if(r(e),void 0===t)return e;switch(n){case 1:return function(n){return e.call(t,n)};case 2:return function(n,r){return e.call(t,n,r)};case 3:return function(n,r,i){return e.call(t,n,r,i)}}return function(){return e.apply(t,arguments)}}},function(e,t){e.exports=function(e){if("function"!=typeof e)throw TypeError(e+" is not a function!");return e}},function(e,t,n){"use strict";var r=n(45),i=n(18),o=n(31),a={};n(7)(a,n(11)("iterator"),function(){return this}),e.exports=function(e,t,n){e.prototype=r(a,{next:i(1,n)}),o(e,t+" Iterator")}},function(e,t,n){var r=n(8),i=n(16),o=n(27);e.exports=n(9)?Object.defineProperties:function(e,t){i(e);for(var n,a=o(t),s=a.length,c=0;s>c;)r.f(e,n=a[c++],t[n]);return e}},function(e,t,n){var r=n(47);e.exports=Object("z").propertyIsEnumerable(0)?Object:function(e){return"String"==r(e)?e.split(""):Object(e)}},function(e,t,n){var r=n(10),i=n(92),o=n(93);e.exports=function(e){return function(t,n,a){var s,c=r(t),l=i(c.length),u=o(a,l);if(e&&n!=n){for(;l>u;)if((s=c[u++])!=s)return!0}else for(;l>u;u++)if((e||u in c)&&c[u]===n)return e||u||0;return!e&&-1}}},function(e,t,n){var r=n(23),i=Math.min;e.exports=function(e){return e>0?i(r(e),9007199254740991):0}},function(e,t,n){var r=n(23),i=Math.max,o=Math.min;e.exports=function(e,t){return e=r(e),e<0?i(e+t,0):o(e,t)}},function(e,t,n){var r=n(4).document;e.exports=r&&r.documentElement},function(e,t,n){var r=n(6),i=n(48),o=n(28)("IE_PROTO"),a=Object.prototype;e.exports=Object.getPrototypeOf||function(e){return e=i(e),r(e,o)?e[o]:"function"==typeof e.constructor&&e instanceof e.constructor?e.constructor.prototype:e instanceof Object?a:null}},function(e,t,n){n(97);for(var r=n(4),i=n(7),o=n(26),a=n(11)("toStringTag"),s="CSSRuleList,CSSStyleDeclaration,CSSValueList,ClientRectList,DOMRectList,DOMStringList,DOMTokenList,DataTransferItemList,FileList,HTMLAllCollection,HTMLCollection,HTMLFormElement,HTMLSelectElement,MediaList,MimeTypeArray,NamedNodeMap,NodeList,PaintRequestList,Plugin,PluginArray,SVGLengthList,SVGNumberList,SVGPathSegList,SVGPointList,SVGStringList,SVGTransformList,SourceBufferList,StyleSheetList,TextTrackCueList,TextTrackList,TouchList".split(","),c=0;c<s.length;c++){var l=s[c],u=r[l],f=u&&u.prototype;f&&!f[a]&&i(f,a,l),o[l]=o.Array}},function(e,t,n){"use strict";var r=n(98),i=n(99),o=n(26),a=n(10);e.exports=n(40)(Array,"Array",function(e,t){this._t=a(e),this._i=0,this._k=t},function(){var e=this._t,t=this._k,n=this._i++;return!e||n>=e.length?(this._t=void 0,i(1)):"keys"==t?i(0,n):"values"==t?i(0,e[n]):i(0,[n,e[n]])},"values"),o.Arguments=o.Array,r("keys"),r("values"),r("entries")},function(e,t){e.exports=function(){}},function(e,t){e.exports=function(e,t){return{value:t,done:!!e}}},function(e,t,n){e.exports={default:n(101),__esModule:!0}},function(e,t,n){n(102),n(108),n(109),n(110),e.exports=n(15).Symbol},function(e,t,n){"use strict";var r=n(4),i=n(6),o=n(9),a=n(41),s=n(44),c=n(103).KEY,l=n(17),u=n(29),f=n(31),d=n(19),h=n(11),p=n(32),v=n(33),g=n(104),b=n(105),x=n(16),m=n(12),_=n(48),w=n(10),y=n(25),C=n(18),k=n(45),F=n(106),S=n(107),A=n(49),O=n(8),E=n(27),M=S.f,j=O.f,L=F.f,P=r.Symbol,R=r.JSON,D=R&&R.stringify,B=h("_hidden"),T=h("toPrimitive"),H={}.propertyIsEnumerable,N=u("symbol-registry"),z=u("symbols"),I=u("op-symbols"),$=Object.prototype,U="function"==typeof P&&!!A.f,G=r.QObject,V=!G||!G.prototype||!G.prototype.findChild,q=o&&l(function(){return 7!=k(j({},"a",{get:function(){return j(this,"a",{value:7}).a}})).a})?function(e,t,n){var r=M($,t);r&&delete $[t],j(e,t,n),r&&e!==$&&j($,t,r)}:j,X=function(e){var t=z[e]=k(P.prototype);return t._k=e,t},W=U&&"symbol"==typeof P.iterator?function(e){return"symbol"==typeof e}:function(e){return e instanceof P},Y=function(e,t,n){return e===$&&Y(I,t,n),x(e),t=y(t,!0),x(n),i(z,t)?(n.enumerable?(i(e,B)&&e[B][t]&&(e[B][t]=!1),n=k(n,{enumerable:C(0,!1)})):(i(e,B)||j(e,B,C(1,{})),e[B][t]=!0),q(e,t,n)):j(e,t,n)},J=function(e,t){x(e);for(var n,r=g(t=w(t)),i=0,o=r.length;o>i;)Y(e,n=r[i++],t[n]);return e},K=function(e,t){return void 0===t?k(e):J(k(e),t)},Z=function(e){var t=H.call(this,e=y(e,!0));return!(this===$&&i(z,e)&&!i(I,e))&&(!(t||!i(this,e)||!i(z,e)||i(this,B)&&this[B][e])||t)},Q=function(e,t){if(e=w(e),t=y(t,!0),e!==$||!i(z,t)||i(I,t)){var n=M(e,t);return!n||!i(z,t)||i(e,B)&&e[B][t]||(n.enumerable=!0),n}},ee=function(e){for(var t,n=L(w(e)),r=[],o=0;n.length>o;)i(z,t=n[o++])||t==B||t==c||r.push(t);return r},te=function(e){for(var t,n=e===$,r=L(n?I:w(e)),o=[],a=0;r.length>a;)!i(z,t=r[a++])||n&&!i($,t)||o.push(z[t]);return o};U||(P=function(){if(this instanceof P)throw TypeError("Symbol is not a constructor!");var e=d(arguments.length>0?arguments[0]:void 0),t=function(n){this===$&&t.call(I,n),i(this,B)&&i(this[B],e)&&(this[B][e]=!1),q(this,e,C(1,n))};return o&&V&&q($,e,{configurable:!0,set:t}),X(e)},s(P.prototype,"toString",function(){return this._k}),S.f=Q,O.f=Y,n(50).f=F.f=ee,n(34).f=Z,A.f=te,o&&!n(14)&&s($,"propertyIsEnumerable",Z,!0),p.f=function(e){return X(h(e))}),a(a.G+a.W+a.F*!U,{Symbol:P});for(var ne="hasInstance,isConcatSpreadable,iterator,match,replace,search,species,split,toPrimitive,toStringTag,unscopables".split(","),re=0;ne.length>re;)h(ne[re++]);for(var ie=E(h.store),oe=0;ie.length>oe;)v(ie[oe++]);a(a.S+a.F*!U,"Symbol",{for:function(e){return i(N,e+="")?N[e]:N[e]=P(e)},keyFor:function(e){if(!W(e))throw TypeError(e+" is not a symbol!");for(var t in N)if(N[t]===e)return t},useSetter:function(){V=!0},useSimple:function(){V=!1}}),a(a.S+a.F*!U,"Object",{create:K,defineProperty:Y,defineProperties:J,getOwnPropertyDescriptor:Q,getOwnPropertyNames:ee,getOwnPropertySymbols:te});var ae=l(function(){A.f(1)});a(a.S+a.F*ae,"Object",{getOwnPropertySymbols:function(e){return A.f(_(e))}}),R&&a(a.S+a.F*(!U||l(function(){var e=P();return"[null]"!=D([e])||"{}"!=D({a:e})||"{}"!=D(Object(e))})),"JSON",{stringify:function(e){for(var t,n,r=[e],i=1;arguments.length>i;)r.push(arguments[i++]);if(n=t=r[1],(m(t)||void 0!==e)&&!W(e))return b(t)||(t=function(e,t){if("function"==typeof n&&(t=n.call(this,e,t)),!W(t))return t}),r[1]=t,D.apply(R,r)}}),P.prototype[T]||n(7)(P.prototype,T,P.prototype.valueOf),f(P,"Symbol"),f(Math,"Math",!0),f(r.JSON,"JSON",!0)},function(e,t,n){var r=n(19)("meta"),i=n(12),o=n(6),a=n(8).f,s=0,c=Object.isExtensible||function(){return!0},l=!n(17)(function(){return c(Object.preventExtensions({}))}),u=function(e){a(e,r,{value:{i:"O"+ ++s,w:{}}})},f=function(e,t){if(!i(e))return"symbol"==typeof e?e:("string"==typeof e?"S":"P")+e;if(!o(e,r)){if(!c(e))return"F";if(!t)return"E";u(e)}return e[r].i},d=function(e,t){if(!o(e,r)){if(!c(e))return!0;if(!t)return!1;u(e)}return e[r].w},h=function(e){return l&&p.NEED&&c(e)&&!o(e,r)&&u(e),e},p=e.exports={KEY:r,NEED:!1,fastKey:f,getWeak:d,onFreeze:h}},function(e,t,n){var r=n(27),i=n(49),o=n(34);e.exports=function(e){var t=r(e),n=i.f;if(n)for(var a,s=n(e),c=o.f,l=0;s.length>l;)c.call(e,a=s[l++])&&t.push(a);return t}},function(e,t,n){var r=n(47);e.exports=Array.isArray||function(e){return"Array"==r(e)}},function(e,t,n){var r=n(10),i=n(50).f,o={}.toString,a="object"==typeof window&&window&&Object.getOwnPropertyNames?Object.getOwnPropertyNames(window):[],s=function(e){try{return i(e)}catch(e){return a.slice()}};e.exports.f=function(e){return a&&"[object Window]"==o.call(e)?s(e):i(r(e))}},function(e,t,n){var r=n(34),i=n(18),o=n(10),a=n(25),s=n(6),c=n(42),l=Object.getOwnPropertyDescriptor;t.f=n(9)?l:function(e,t){if(e=o(e),t=a(t,!0),c)try{return l(e,t)}catch(e){}if(s(e,t))return i(!r.f.call(e,t),e[t])}},function(e,t){},function(e,t,n){n(33)("asyncIterator")},function(e,t,n){n(33)("observable")},function(e,t,n){var r=n(112);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("7c5f1a1c",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-hue {\n  position: absolute;\n  top: 0px;\n  right: 0px;\n  bottom: 0px;\n  left: 0px;\n  border-radius: 2px;\n}\n.vc-hue--horizontal {\n  background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);\n}\n.vc-hue--vertical {\n  background: linear-gradient(to top, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);\n}\n.vc-hue-container {\n  cursor: pointer;\n  margin: 0 2px;\n  position: relative;\n  height: 100%;\n}\n.vc-hue-pointer {\n  z-index: 2;\n  position: absolute;\n}\n.vc-hue-picker {\n  cursor: pointer;\n  margin-top: 1px;\n  width: 4px;\n  border-radius: 1px;\n  height: 8px;\n  box-shadow: 0 0 2px rgba(0, 0, 0, .6);\n  background: #fff;\n  transform: translateX(-2px) ;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{class:["vc-hue",e.directionClass]},[n("div",{ref:"container",staticClass:"vc-hue-container",attrs:{role:"slider","aria-valuenow":e.colors.hsl.h,"aria-valuemin":"0","aria-valuemax":"360"},on:{mousedown:e.handleMouseDown,touchmove:e.handleChange,touchstart:e.handleChange}},[n("div",{staticClass:"vc-hue-pointer",style:{top:e.pointerTop,left:e.pointerLeft},attrs:{role:"presentation"}},[n("div",{staticClass:"vc-hue-picker"})])])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-slider",attrs:{role:"application","aria-label":"Slider color picker"}},[n("div",{staticClass:"vc-slider-hue-warp"},[n("hue",{on:{change:e.hueChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),n("div",{staticClass:"vc-slider-swatches",attrs:{role:"group"}},e._l(e.normalizedSwatches,function(t,r){return n("div",{key:r,staticClass:"vc-slider-swatch",attrs:{"data-index":r,"aria-label":"color:"+e.colors.hex,role:"button"},on:{click:function(n){return e.handleSwClick(r,t)}}},[n("div",{staticClass:"vc-slider-swatch-picker",class:{"vc-slider-swatch-picker--active":e.isActive(t,r),"vc-slider-swatch-picker--white":1===t.l},style:{background:"hsl("+e.colors.hsl.h+", "+100*t.s+"%, "+100*t.l+"%)"}})])}),0)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(116)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(52),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(119),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Swatches.vue",t.default=f.exports},function(e,t,n){var r=n(117);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("10f839a2",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-swatches {\n  width: 320px;\n  height: 240px;\n  overflow-y: scroll;\n  background-color: #fff;\n  box-shadow: 0 2px 10px rgba(0,0,0,.12), 0 2px 5px rgba(0,0,0,.16);\n}\n.vc-swatches-box {\n  padding: 16px 0 6px 16px;\n  overflow: hidden;\n}\n.vc-swatches-color-group {\n  padding-bottom: 10px;\n  width: 40px;\n  float: left;\n  margin-right: 10px;\n}\n.vc-swatches-color-it {\n  box-sizing: border-box;\n  width: 40px;\n  height: 24px;\n  cursor: pointer;\n  background: #880e4f;\n  margin-bottom: 1px;\n  overflow: hidden;\n  -ms-border-radius: 2px 2px 0 0;\n  -moz-border-radius: 2px 2px 0 0;\n  -o-border-radius: 2px 2px 0 0;\n  -webkit-border-radius: 2px 2px 0 0;\n  border-radius: 2px 2px 0 0;\n}\n.vc-swatches-color--white {\n  border: 1px solid #DDD;\n}\n.vc-swatches-pick {\n  fill: rgb(255, 255, 255);\n  margin-left: 8px;\n  display: block;\n}\n.vc-swatches-color--white .vc-swatches-pick {\n  fill: rgb(51, 51, 51);\n}\n",""])},function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),n.d(t,"red",function(){return r}),n.d(t,"pink",function(){return i}),n.d(t,"purple",function(){return o}),n.d(t,"deepPurple",function(){return a}),n.d(t,"indigo",function(){return s}),n.d(t,"blue",function(){return c}),n.d(t,"lightBlue",function(){return l}),n.d(t,"cyan",function(){return u}),n.d(t,"teal",function(){return f}),n.d(t,"green",function(){return d}),n.d(t,"lightGreen",function(){return h}),n.d(t,"lime",function(){return p}),n.d(t,"yellow",function(){return v}),n.d(t,"amber",function(){return g}),n.d(t,"orange",function(){return b}),n.d(t,"deepOrange",function(){return x}),n.d(t,"brown",function(){return m}),n.d(t,"grey",function(){return _}),n.d(t,"blueGrey",function(){return w}),n.d(t,"darkText",function(){return y}),n.d(t,"lightText",function(){return C}),n.d(t,"darkIcons",function(){return k}),n.d(t,"lightIcons",function(){return F}),n.d(t,"white",function(){return S}),n.d(t,"black",function(){return A});var r={50:"#ffebee",100:"#ffcdd2",200:"#ef9a9a",300:"#e57373",400:"#ef5350",500:"#f44336",600:"#e53935",700:"#d32f2f",800:"#c62828",900:"#b71c1c",a100:"#ff8a80",a200:"#ff5252",a400:"#ff1744",a700:"#d50000"},i={50:"#fce4ec",100:"#f8bbd0",200:"#f48fb1",300:"#f06292",400:"#ec407a",500:"#e91e63",600:"#d81b60",700:"#c2185b",800:"#ad1457",900:"#880e4f",a100:"#ff80ab",a200:"#ff4081",a400:"#f50057",a700:"#c51162"},o={50:"#f3e5f5",100:"#e1bee7",200:"#ce93d8",300:"#ba68c8",400:"#ab47bc",500:"#9c27b0",600:"#8e24aa",700:"#7b1fa2",800:"#6a1b9a",900:"#4a148c",a100:"#ea80fc",a200:"#e040fb",a400:"#d500f9",a700:"#aa00ff"},a={50:"#ede7f6",100:"#d1c4e9",200:"#b39ddb",300:"#9575cd",400:"#7e57c2",500:"#673ab7",600:"#5e35b1",700:"#512da8",800:"#4527a0",900:"#311b92",a100:"#b388ff",a200:"#7c4dff",a400:"#651fff",a700:"#6200ea"},s={50:"#e8eaf6",100:"#c5cae9",200:"#9fa8da",300:"#7986cb",400:"#5c6bc0",500:"#3f51b5",600:"#3949ab",700:"#303f9f",800:"#283593",900:"#1a237e",a100:"#8c9eff",a200:"#536dfe",a400:"#3d5afe",a700:"#304ffe"},c={50:"#e3f2fd",100:"#bbdefb",200:"#90caf9",300:"#64b5f6",400:"#42a5f5",500:"#2196f3",600:"#1e88e5",700:"#1976d2",800:"#1565c0",900:"#0d47a1",a100:"#82b1ff",a200:"#448aff",a400:"#2979ff",a700:"#2962ff"},l={50:"#e1f5fe",100:"#b3e5fc",200:"#81d4fa",300:"#4fc3f7",400:"#29b6f6",500:"#03a9f4",600:"#039be5",700:"#0288d1",800:"#0277bd",900:"#01579b",a100:"#80d8ff",a200:"#40c4ff",a400:"#00b0ff",a700:"#0091ea"},u={50:"#e0f7fa",100:"#b2ebf2",200:"#80deea",300:"#4dd0e1",400:"#26c6da",500:"#00bcd4",600:"#00acc1",700:"#0097a7",800:"#00838f",900:"#006064",a100:"#84ffff",a200:"#18ffff",a400:"#00e5ff",a700:"#00b8d4"},f={50:"#e0f2f1",100:"#b2dfdb",200:"#80cbc4",300:"#4db6ac",400:"#26a69a",500:"#009688",600:"#00897b",700:"#00796b",800:"#00695c",900:"#004d40",a100:"#a7ffeb",a200:"#64ffda",a400:"#1de9b6",a700:"#00bfa5"},d={50:"#e8f5e9",100:"#c8e6c9",200:"#a5d6a7",300:"#81c784",400:"#66bb6a",500:"#4caf50",600:"#43a047",700:"#388e3c",800:"#2e7d32",900:"#1b5e20",a100:"#b9f6ca",a200:"#69f0ae",a400:"#00e676",a700:"#00c853"},h={50:"#f1f8e9",100:"#dcedc8",200:"#c5e1a5",300:"#aed581",400:"#9ccc65",500:"#8bc34a",600:"#7cb342",700:"#689f38",800:"#558b2f",900:"#33691e",a100:"#ccff90",a200:"#b2ff59",a400:"#76ff03",a700:"#64dd17"},p={50:"#f9fbe7",100:"#f0f4c3",200:"#e6ee9c",300:"#dce775",400:"#d4e157",500:"#cddc39",600:"#c0ca33",700:"#afb42b",800:"#9e9d24",900:"#827717",a100:"#f4ff81",a200:"#eeff41",a400:"#c6ff00",a700:"#aeea00"},v={50:"#fffde7",100:"#fff9c4",200:"#fff59d",300:"#fff176",400:"#ffee58",500:"#ffeb3b",600:"#fdd835",700:"#fbc02d",800:"#f9a825",900:"#f57f17",a100:"#ffff8d",a200:"#ffff00",a400:"#ffea00",a700:"#ffd600"},g={50:"#fff8e1",100:"#ffecb3",200:"#ffe082",300:"#ffd54f",400:"#ffca28",500:"#ffc107",600:"#ffb300",700:"#ffa000",800:"#ff8f00",900:"#ff6f00",a100:"#ffe57f",a200:"#ffd740",a400:"#ffc400",a700:"#ffab00"},b={50:"#fff3e0",100:"#ffe0b2",200:"#ffcc80",300:"#ffb74d",400:"#ffa726",500:"#ff9800",600:"#fb8c00",700:"#f57c00",800:"#ef6c00",900:"#e65100",a100:"#ffd180",a200:"#ffab40",a400:"#ff9100",a700:"#ff6d00"},x={50:"#fbe9e7",100:"#ffccbc",200:"#ffab91",300:"#ff8a65",400:"#ff7043",500:"#ff5722",600:"#f4511e",700:"#e64a19",800:"#d84315",900:"#bf360c",a100:"#ff9e80",a200:"#ff6e40",a400:"#ff3d00",a700:"#dd2c00"},m={50:"#efebe9",100:"#d7ccc8",200:"#bcaaa4",300:"#a1887f",400:"#8d6e63",500:"#795548",600:"#6d4c41",700:"#5d4037",800:"#4e342e",900:"#3e2723"},_={50:"#fafafa",100:"#f5f5f5",200:"#eeeeee",300:"#e0e0e0",400:"#bdbdbd",500:"#9e9e9e",600:"#757575",700:"#616161",800:"#424242",900:"#212121"},w={50:"#eceff1",100:"#cfd8dc",200:"#b0bec5",300:"#90a4ae",400:"#78909c",500:"#607d8b",600:"#546e7a",700:"#455a64",800:"#37474f",900:"#263238"},y={primary:"rgba(0, 0, 0, 0.87)",secondary:"rgba(0, 0, 0, 0.54)",disabled:"rgba(0, 0, 0, 0.38)",dividers:"rgba(0, 0, 0, 0.12)"},C={primary:"rgba(255, 255, 255, 1)",secondary:"rgba(255, 255, 255, 0.7)",disabled:"rgba(255, 255, 255, 0.5)",dividers:"rgba(255, 255, 255, 0.12)"},k={active:"rgba(0, 0, 0, 0.54)",inactive:"rgba(0, 0, 0, 0.38)"},F={active:"rgba(255, 255, 255, 1)",inactive:"rgba(255, 255, 255, 0.5)"},S="#ffffff",A="#000000";t.default={red:r,pink:i,purple:o,deepPurple:a,indigo:s,blue:c,lightBlue:l,cyan:u,teal:f,green:d,lightGreen:h,lime:p,yellow:v,amber:g,orange:b,deepOrange:x,brown:m,grey:_,blueGrey:w,darkText:y,lightText:C,darkIcons:k,lightIcons:F,white:S,black:A}},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-swatches",attrs:{role:"application","aria-label":"Swatches color picker","data-pick":e.pick}},[n("div",{staticClass:"vc-swatches-box",attrs:{role:"listbox"}},e._l(e.palette,function(t,r){return n("div",{key:r,staticClass:"vc-swatches-color-group"},e._l(t,function(t){return n("div",{key:t,class:["vc-swatches-color-it",{"vc-swatches-color--white":"#FFFFFF"===t}],style:{background:t},attrs:{role:"option","aria-label":"Color:"+t,"aria-selected":e.equal(t),"data-color":t},on:{click:function(n){return e.handlerClick(t)}}},[n("div",{directives:[{name:"show",rawName:"v-show",value:e.equal(t),expression:"equal(c)"}],staticClass:"vc-swatches-pick"},[n("svg",{staticStyle:{width:"24px",height:"24px"},attrs:{viewBox:"0 0 24 24"}},[n("path",{attrs:{d:"M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"}})])])])}),0)}),0)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(121)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(53),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(134),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Photoshop.vue",t.default=f.exports},function(e,t,n){var r=n(122);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("080365d4",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,'\n.vc-photoshop {\n  background: #DCDCDC;\n  border-radius: 4px;\n  box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 8px 16px rgba(0,0,0,.15);\n  box-sizing: initial;\n  width: 513px;\n  font-family: Roboto;\n}\n.vc-photoshop__disable-fields {\n  width: 390px;\n}\n.vc-ps-head {\n  background-image: linear-gradient(-180deg, #F0F0F0 0%, #D4D4D4 100%);\n  border-bottom: 1px solid #B1B1B1;\n  box-shadow: inset 0 1px 0 0 rgba(255,255,255,.2), inset 0 -1px 0 0 rgba(0,0,0,.02);\n  height: 23px;\n  line-height: 24px;\n  border-radius: 4px 4px 0 0;\n  font-size: 13px;\n  color: #4D4D4D;\n  text-align: center;\n}\n.vc-ps-body {\n  padding: 15px;\n  display: flex;\n}\n.vc-ps-saturation-wrap {\n  width: 256px;\n  height: 256px;\n  position: relative;\n  border: 2px solid #B3B3B3;\n  border-bottom: 2px solid #F0F0F0;\n  overflow: hidden;\n}\n.vc-ps-saturation-wrap .vc-saturation-circle {\n  width: 12px;\n  height: 12px;\n}\n.vc-ps-hue-wrap {\n  position: relative;\n  height: 256px;\n  width: 19px;\n  margin-left: 10px;\n  border: 2px solid #B3B3B3;\n  border-bottom: 2px solid #F0F0F0;\n}\n.vc-ps-hue-pointer {\n  position: relative;\n}\n.vc-ps-hue-pointer--left,\n.vc-ps-hue-pointer--right {\n  position: absolute;\n  width: 0;\n  height: 0;\n  border-style: solid;\n  border-width: 5px 0 5px 8px;\n  border-color: transparent transparent transparent #555;\n}\n.vc-ps-hue-pointer--left:after,\n.vc-ps-hue-pointer--right:after {\n  content: "";\n  width: 0;\n  height: 0;\n  border-style: solid;\n  border-width: 4px 0 4px 6px;\n  border-color: transparent transparent transparent #fff;\n  position: absolute;\n  top: 1px;\n  left: 1px;\n  transform: translate(-8px, -5px);\n}\n.vc-ps-hue-pointer--left {\n  transform: translate(-13px, -4px);\n}\n.vc-ps-hue-pointer--right {\n  transform: translate(20px, -4px) rotate(180deg);\n}\n.vc-ps-controls {\n  width: 180px;\n  margin-left: 10px;\n  display: flex;\n}\n.vc-ps-controls__disable-fields {\n  width: auto;\n}\n.vc-ps-actions {\n  margin-left: 20px;\n  flex: 1;\n}\n.vc-ps-ac-btn {\n  cursor: pointer;\n  background-image: linear-gradient(-180deg, #FFFFFF 0%, #E6E6E6 100%);\n  border: 1px solid #878787;\n  border-radius: 2px;\n  height: 20px;\n  box-shadow: 0 1px 0 0 #EAEAEA;\n  font-size: 14px;\n  color: #000;\n  line-height: 20px;\n  text-align: center;\n  margin-bottom: 10px;\n}\n.vc-ps-previews {\n  width: 60px;\n}\n.vc-ps-previews__swatches {\n  border: 1px solid #B3B3B3;\n  border-bottom: 1px solid #F0F0F0;\n  margin-bottom: 2px;\n  margin-top: 1px;\n}\n.vc-ps-previews__pr-color {\n  height: 34px;\n  box-shadow: inset 1px 0 0 #000, inset -1px 0 0 #000, inset 0 1px 0 #000;\n}\n.vc-ps-previews__label {\n  font-size: 14px;\n  color: #000;\n  text-align: center;\n}\n.vc-ps-fields {\n  padding-top: 5px;\n  padding-bottom: 9px;\n  width: 80px;\n  position: relative;\n}\n.vc-ps-fields .vc-input__input {\n  margin-left: 40%;\n  width: 40%;\n  height: 18px;\n  border: 1px solid #888888;\n  box-shadow: inset 0 1px 1px rgba(0,0,0,.1), 0 1px 0 0 #ECECEC;\n  margin-bottom: 5px;\n  font-size: 13px;\n  padding-left: 3px;\n  margin-right: 10px;\n}\n.vc-ps-fields .vc-input__label, .vc-ps-fields .vc-input__desc {\n  top: 0;\n  text-transform: uppercase;\n  font-size: 13px;\n  height: 18px;\n  line-height: 22px;\n  position: absolute;\n}\n.vc-ps-fields .vc-input__label {\n  left: 0;\n  width: 34px;\n}\n.vc-ps-fields .vc-input__desc {\n  right: 0;\n  width: 0;\n}\n.vc-ps-fields__divider {\n  height: 5px;\n}\n.vc-ps-fields__hex .vc-input__input {\n  margin-left: 20%;\n  width: 80%;\n  height: 18px;\n  border: 1px solid #888888;\n  box-shadow: inset 0 1px 1px rgba(0,0,0,.1), 0 1px 0 0 #ECECEC;\n  margin-bottom: 6px;\n  font-size: 13px;\n  padding-left: 3px;\n}\n.vc-ps-fields__hex .vc-input__label {\n  position: absolute;\n  top: 0;\n  left: 0;\n  width: 14px;\n  text-transform: uppercase;\n  font-size: 13px;\n  height: 18px;\n  line-height: 22px;\n}\n',""])},function(e,t,n){var r=n(124);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("b5380e52",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-saturation,\n.vc-saturation--white,\n.vc-saturation--black {\n  cursor: pointer;\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n}\n.vc-saturation--white {\n  background: linear-gradient(to right, #fff, rgba(255,255,255,0));\n}\n.vc-saturation--black {\n  background: linear-gradient(to top, #000, rgba(0,0,0,0));\n}\n.vc-saturation-pointer {\n  cursor: pointer;\n  position: absolute;\n}\n.vc-saturation-circle {\n  cursor: head;\n  width: 4px;\n  height: 4px;\n  box-shadow: 0 0 0 1.5px #fff, inset 0 0 1px 1px rgba(0,0,0,.3), 0 0 1px 2px rgba(0,0,0,.4);\n  border-radius: 50%;\n  transform: translate(-2px, -2px);\n}\n",""])},function(e,t){function n(e,t,n){return t<n?e<t?t:e>n?n:e:e<n?n:e>t?t:e}e.exports=n},function(e,t){function n(e,t,n){function r(t){var n=v,r=g;return v=g=void 0,k=t,x=e.apply(r,n)}function o(e){return k=e,m=setTimeout(u,t),F?r(e):x}function a(e){var n=e-_,r=e-k,i=t-n;return S?y(i,b-r):i}function l(e){var n=e-_,r=e-k;return void 0===_||n>=t||n<0||S&&r>=b}function u(){var e=C();if(l(e))return f(e);m=setTimeout(u,a(e))}function f(e){return m=void 0,A&&v?r(e):(v=g=void 0,x)}function d(){void 0!==m&&clearTimeout(m),k=0,v=_=g=m=void 0}function h(){return void 0===m?x:f(C())}function p(){var e=C(),n=l(e);if(v=arguments,g=this,_=e,n){if(void 0===m)return o(_);if(S)return m=setTimeout(u,t),r(_)}return void 0===m&&(m=setTimeout(u,t)),x}var v,g,b,x,m,_,k=0,F=!1,S=!1,A=!0;if("function"!=typeof e)throw new TypeError(c);return t=s(t)||0,i(n)&&(F=!!n.leading,S="maxWait"in n,b=S?w(s(n.maxWait)||0,t):b,A="trailing"in n?!!n.trailing:A),p.cancel=d,p.flush=h,p}function r(e,t,r){var o=!0,a=!0;if("function"!=typeof e)throw new TypeError(c);return i(r)&&(o="leading"in r?!!r.leading:o,a="trailing"in r?!!r.trailing:a),n(e,t,{leading:o,maxWait:t,trailing:a})}function i(e){var t=typeof e;return!!e&&("object"==t||"function"==t)}function o(e){return!!e&&"object"==typeof e}function a(e){return"symbol"==typeof e||o(e)&&_.call(e)==u}function s(e){if("number"==typeof e)return e;if(a(e))return l;if(i(e)){var t="function"==typeof e.valueOf?e.valueOf():e;e=i(t)?t+"":t}if("string"!=typeof e)return 0===e?e:+e;e=e.replace(f,"");var n=h.test(e);return n||p.test(e)?v(e.slice(2),n?2:8):d.test(e)?l:+e}var c="Expected a function",l=NaN,u="[object Symbol]",f=/^\s+|\s+$/g,d=/^[-+]0x[0-9a-f]+$/i,h=/^0b[01]+$/i,p=/^0o[0-7]+$/i,v=parseInt,g="object"==typeof __webpack_require__.g&&__webpack_require__.g&&__webpack_require__.g.Object===Object&&__webpack_require__.g,b="object"==typeof self&&self&&self.Object===Object&&self,x=g||b||Function("return this")(),m=Object.prototype,_=m.toString,w=Math.max,y=Math.min,C=function(){return x.Date.now()};e.exports=r},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{ref:"container",staticClass:"vc-saturation",style:{background:e.bgColor},on:{mousedown:e.handleMouseDown,touchmove:e.handleChange,touchstart:e.handleChange}},[n("div",{staticClass:"vc-saturation--white"}),e._v(" "),n("div",{staticClass:"vc-saturation--black"}),e._v(" "),n("div",{staticClass:"vc-saturation-pointer",style:{top:e.pointerTop,left:e.pointerLeft}},[n("div",{staticClass:"vc-saturation-circle"})])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){var r=n(129);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("4dc1b086",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-alpha {\n  position: absolute;\n  top: 0px;\n  right: 0px;\n  bottom: 0px;\n  left: 0px;\n}\n.vc-alpha-checkboard-wrap {\n  position: absolute;\n  top: 0px;\n  right: 0px;\n  bottom: 0px;\n  left: 0px;\n  overflow: hidden;\n}\n.vc-alpha-gradient {\n  position: absolute;\n  top: 0px;\n  right: 0px;\n  bottom: 0px;\n  left: 0px;\n}\n.vc-alpha-container {\n  cursor: pointer;\n  position: relative;\n  z-index: 2;\n  height: 100%;\n  margin: 0 3px;\n}\n.vc-alpha-pointer {\n  z-index: 2;\n  position: absolute;\n}\n.vc-alpha-picker {\n  cursor: pointer;\n  width: 4px;\n  border-radius: 1px;\n  height: 8px;\n  box-shadow: 0 0 2px rgba(0, 0, 0, .6);\n  background: #fff;\n  margin-top: 1px;\n  transform: translateX(-2px);\n}\n",""])},function(e,t,n){var r=n(131);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("7e15c05b",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-checkerboard {\n  position: absolute;\n  top: 0px;\n  right: 0px;\n  bottom: 0px;\n  left: 0px;\n  background-size: contain;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement;return(e._self._c||t)("div",{staticClass:"vc-checkerboard",style:e.bgStyle})},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-alpha"},[n("div",{staticClass:"vc-alpha-checkboard-wrap"},[n("checkboard")],1),e._v(" "),n("div",{staticClass:"vc-alpha-gradient",style:{background:e.gradientColor}}),e._v(" "),n("div",{ref:"container",staticClass:"vc-alpha-container",on:{mousedown:e.handleMouseDown,touchmove:e.handleChange,touchstart:e.handleChange}},[n("div",{staticClass:"vc-alpha-pointer",style:{left:100*e.colors.a+"%"}},[n("div",{staticClass:"vc-alpha-picker"})])])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{class:["vc-photoshop",e.disableFields?"vc-photoshop__disable-fields":""],attrs:{role:"application","aria-label":"PhotoShop color picker"}},[n("div",{staticClass:"vc-ps-head",attrs:{role:"heading"}},[e._v(e._s(e.head))]),e._v(" "),n("div",{staticClass:"vc-ps-body"},[n("div",{staticClass:"vc-ps-saturation-wrap"},[n("saturation",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),n("div",{staticClass:"vc-ps-hue-wrap"},[n("hue",{attrs:{direction:"vertical"},on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}},[n("div",{staticClass:"vc-ps-hue-pointer"},[n("i",{staticClass:"vc-ps-hue-pointer--left"}),n("i",{staticClass:"vc-ps-hue-pointer--right"})])])],1),e._v(" "),n("div",{class:["vc-ps-controls",e.disableFields?"vc-ps-controls__disable-fields":""]},[n("div",{staticClass:"vc-ps-previews"},[n("div",{staticClass:"vc-ps-previews__label"},[e._v(e._s(e.newLabel))]),e._v(" "),n("div",{staticClass:"vc-ps-previews__swatches"},[n("div",{staticClass:"vc-ps-previews__pr-color",style:{background:e.colors.hex},attrs:{"aria-label":"New color is "+e.colors.hex}}),e._v(" "),n("div",{staticClass:"vc-ps-previews__pr-color",style:{background:e.currentColor},attrs:{"aria-label":"Current color is "+e.currentColor},on:{click:e.clickCurrentColor}})]),e._v(" "),n("div",{staticClass:"vc-ps-previews__label"},[e._v(e._s(e.currentLabel))])]),e._v(" "),e.disableFields?e._e():n("div",{staticClass:"vc-ps-actions"},[n("div",{staticClass:"vc-ps-ac-btn",attrs:{role:"button","aria-label":e.acceptLabel},on:{click:e.handleAccept}},[e._v(e._s(e.acceptLabel))]),e._v(" "),n("div",{staticClass:"vc-ps-ac-btn",attrs:{role:"button","aria-label":e.cancelLabel},on:{click:e.handleCancel}},[e._v(e._s(e.cancelLabel))]),e._v(" "),n("div",{staticClass:"vc-ps-fields"},[n("ed-in",{attrs:{label:"h",desc:"°",value:e.hsv.h},on:{change:e.inputChange}}),e._v(" "),n("ed-in",{attrs:{label:"s",desc:"%",value:e.hsv.s,max:100},on:{change:e.inputChange}}),e._v(" "),n("ed-in",{attrs:{label:"v",desc:"%",value:e.hsv.v,max:100},on:{change:e.inputChange}}),e._v(" "),n("div",{staticClass:"vc-ps-fields__divider"}),e._v(" "),n("ed-in",{attrs:{label:"r",value:e.colors.rgba.r},on:{change:e.inputChange}}),e._v(" "),n("ed-in",{attrs:{label:"g",value:e.colors.rgba.g},on:{change:e.inputChange}}),e._v(" "),n("ed-in",{attrs:{label:"b",value:e.colors.rgba.b},on:{change:e.inputChange}}),e._v(" "),n("div",{staticClass:"vc-ps-fields__divider"}),e._v(" "),n("ed-in",{staticClass:"vc-ps-fields__hex",attrs:{label:"#",value:e.hex},on:{change:e.inputChange}})],1),e._v(" "),e.hasResetButton?n("div",{staticClass:"vc-ps-ac-btn",attrs:{"aria-label":"reset"},on:{click:e.handleReset}},[e._v(e._s(e.resetLabel))]):e._e()])])])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(136)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(57),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(138),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Sketch.vue",t.default=f.exports},function(e,t,n){var r=n(137);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("612c6604",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-sketch {\n  position: relative;\n  width: 200px;\n  padding: 10px 10px 0;\n  box-sizing: initial;\n  background: #fff;\n  border-radius: 4px;\n  box-shadow: 0 0 0 1px rgba(0, 0, 0, .15), 0 8px 16px rgba(0, 0, 0, .15);\n}\n.vc-sketch-saturation-wrap {\n  width: 100%;\n  padding-bottom: 75%;\n  position: relative;\n  overflow: hidden;\n}\n.vc-sketch-controls {\n  display: flex;\n}\n.vc-sketch-sliders {\n  padding: 4px 0;\n  flex: 1;\n}\n.vc-sketch-sliders .vc-hue,\n.vc-sketch-sliders .vc-alpha-gradient {\n  border-radius: 2px;\n}\n.vc-sketch-hue-wrap {\n  position: relative;\n  height: 10px;\n}\n.vc-sketch-alpha-wrap {\n  position: relative;\n  height: 10px;\n  margin-top: 4px;\n  overflow: hidden;\n}\n.vc-sketch-color-wrap {\n  width: 24px;\n  height: 24px;\n  position: relative;\n  margin-top: 4px;\n  margin-left: 4px;\n  border-radius: 3px;\n}\n.vc-sketch-active-color {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  border-radius: 2px;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15), inset 0 0 4px rgba(0, 0, 0, .25);\n  z-index: 2;\n}\n.vc-sketch-color-wrap .vc-checkerboard {\n  background-size: auto;\n}\n.vc-sketch-field {\n  display: flex;\n  padding-top: 4px;\n}\n.vc-sketch-field .vc-input__input {\n  width: 90%;\n  padding: 4px 0 3px 10%;\n  border: none;\n  box-shadow: inset 0 0 0 1px #ccc;\n  font-size: 10px;\n}\n.vc-sketch-field .vc-input__label {\n  display: block;\n  text-align: center;\n  font-size: 11px;\n  color: #222;\n  padding-top: 3px;\n  padding-bottom: 4px;\n  text-transform: capitalize;\n}\n.vc-sketch-field--single {\n  flex: 1;\n  padding-left: 6px;\n}\n.vc-sketch-field--double {\n  flex: 2;\n}\n.vc-sketch-presets {\n  margin-right: -10px;\n  margin-left: -10px;\n  padding-left: 10px;\n  padding-top: 10px;\n  border-top: 1px solid #eee;\n}\n.vc-sketch-presets-color {\n  border-radius: 3px;\n  overflow: hidden;\n  position: relative;\n  display: inline-block;\n  margin: 0 10px 10px 0;\n  vertical-align: top;\n  cursor: pointer;\n  width: 16px;\n  height: 16px;\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15);\n}\n.vc-sketch-presets-color .vc-checkerboard {\n  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15);\n  border-radius: 3px;\n}\n.vc-sketch__disable-alpha .vc-sketch-color-wrap {\n  height: 10px;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{class:["vc-sketch",e.disableAlpha?"vc-sketch__disable-alpha":""],attrs:{role:"application","aria-label":"Sketch color picker"}},[n("div",{staticClass:"vc-sketch-saturation-wrap"},[n("saturation",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),n("div",{staticClass:"vc-sketch-controls"},[n("div",{staticClass:"vc-sketch-sliders"},[n("div",{staticClass:"vc-sketch-hue-wrap"},[n("hue",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),e.disableAlpha?e._e():n("div",{staticClass:"vc-sketch-alpha-wrap"},[n("alpha",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1)]),e._v(" "),n("div",{staticClass:"vc-sketch-color-wrap"},[n("div",{staticClass:"vc-sketch-active-color",style:{background:e.activeColor},attrs:{"aria-label":"Current color is "+e.activeColor}}),e._v(" "),n("checkboard")],1)]),e._v(" "),e.disableFields?e._e():n("div",{staticClass:"vc-sketch-field"},[n("div",{staticClass:"vc-sketch-field--double"},[n("ed-in",{attrs:{label:"hex",value:e.hex},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-sketch-field--single"},[n("ed-in",{attrs:{label:"r",value:e.colors.rgba.r},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-sketch-field--single"},[n("ed-in",{attrs:{label:"g",value:e.colors.rgba.g},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-sketch-field--single"},[n("ed-in",{attrs:{label:"b",value:e.colors.rgba.b},on:{change:e.inputChange}})],1),e._v(" "),e.disableAlpha?e._e():n("div",{staticClass:"vc-sketch-field--single"},[n("ed-in",{attrs:{label:"a",value:e.colors.a,"arrow-offset":.01,max:1},on:{change:e.inputChange}})],1)]),e._v(" "),n("div",{staticClass:"vc-sketch-presets",attrs:{role:"group","aria-label":"A color preset, pick one to set as current color"}},[e._l(e.presetColors,function(t){return[e.isTransparent(t)?n("div",{key:t,staticClass:"vc-sketch-presets-color",attrs:{"aria-label":"Color:"+t},on:{click:function(n){return e.handlePreset(t)}}},[n("checkboard")],1):n("div",{key:t,staticClass:"vc-sketch-presets-color",style:{background:t},attrs:{"aria-label":"Color:"+t},on:{click:function(n){return e.handlePreset(t)}}})]})],2)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(140)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(58),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(142),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Chrome.vue",t.default=f.exports},function(e,t,n){var r=n(141);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("1cd16048",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-chrome {\n  background: #fff;\n  border-radius: 2px;\n  box-shadow: 0 0 2px rgba(0,0,0,.3), 0 4px 8px rgba(0,0,0,.3);\n  box-sizing: initial;\n  width: 225px;\n  font-family: Menlo;\n  background-color: #fff;\n}\n.vc-chrome-controls {\n  display: flex;\n}\n.vc-chrome-color-wrap {\n  position: relative;\n  width: 36px;\n}\n.vc-chrome-active-color {\n  position: relative;\n  width: 30px;\n  height: 30px;\n  border-radius: 15px;\n  overflow: hidden;\n  z-index: 1;\n}\n.vc-chrome-color-wrap .vc-checkerboard {\n  width: 30px;\n  height: 30px;\n  border-radius: 15px;\n  background-size: auto;\n}\n.vc-chrome-sliders {\n  flex: 1;\n}\n.vc-chrome-fields-wrap {\n  display: flex;\n  padding-top: 16px;\n}\n.vc-chrome-fields {\n  display: flex;\n  margin-left: -6px;\n  flex: 1;\n}\n.vc-chrome-field {\n  padding-left: 6px;\n  width: 100%;\n}\n.vc-chrome-toggle-btn {\n  width: 32px;\n  text-align: right;\n  position: relative;\n}\n.vc-chrome-toggle-icon {\n  margin-right: -4px;\n  margin-top: 12px;\n  cursor: pointer;\n  position: relative;\n  z-index: 2;\n}\n.vc-chrome-toggle-icon-highlight {\n  position: absolute;\n  width: 24px;\n  height: 28px;\n  background: #eee;\n  border-radius: 4px;\n  top: 10px;\n  left: 12px;\n}\n.vc-chrome-hue-wrap {\n  position: relative;\n  height: 10px;\n  margin-bottom: 8px;\n}\n.vc-chrome-alpha-wrap {\n  position: relative;\n  height: 10px;\n}\n.vc-chrome-hue-wrap .vc-hue {\n  border-radius: 2px;\n}\n.vc-chrome-alpha-wrap .vc-alpha-gradient {\n  border-radius: 2px;\n}\n.vc-chrome-hue-wrap .vc-hue-picker, .vc-chrome-alpha-wrap .vc-alpha-picker {\n  width: 12px;\n  height: 12px;\n  border-radius: 6px;\n  transform: translate(-6px, -2px);\n  background-color: rgb(248, 248, 248);\n  box-shadow: 0 1px 4px 0 rgba(0, 0, 0, 0.37);\n}\n.vc-chrome-body {\n  padding: 16px 16px 12px;\n  background-color: #fff;\n}\n.vc-chrome-saturation-wrap {\n  width: 100%;\n  padding-bottom: 55%;\n  position: relative;\n  border-radius: 2px 2px 0 0;\n  overflow: hidden;\n}\n.vc-chrome-saturation-wrap .vc-saturation-circle {\n  width: 12px;\n  height: 12px;\n}\n.vc-chrome-fields .vc-input__input {\n  font-size: 11px;\n  color: #333;\n  width: 100%;\n  border-radius: 2px;\n  border: none;\n  box-shadow: inset 0 0 0 1px #dadada;\n  height: 21px;\n  text-align: center;\n}\n.vc-chrome-fields .vc-input__label {\n  text-transform: uppercase;\n  font-size: 11px;\n  line-height: 11px;\n  color: #969696;\n  text-align: center;\n  display: block;\n  margin-top: 12px;\n}\n.vc-chrome__disable-alpha .vc-chrome-active-color {\n  width: 18px;\n  height: 18px;\n}\n.vc-chrome__disable-alpha .vc-chrome-color-wrap {\n  width: 30px;\n}\n.vc-chrome__disable-alpha .vc-chrome-hue-wrap {\n  margin-top: 4px;\n  margin-bottom: 4px;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{class:["vc-chrome",e.disableAlpha?"vc-chrome__disable-alpha":""],attrs:{role:"application","aria-label":"Chrome color picker"}},[n("div",{staticClass:"vc-chrome-saturation-wrap"},[n("saturation",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),n("div",{staticClass:"vc-chrome-body"},[n("div",{staticClass:"vc-chrome-controls"},[n("div",{staticClass:"vc-chrome-color-wrap"},[n("div",{staticClass:"vc-chrome-active-color",style:{background:e.activeColor},attrs:{"aria-label":"current color is "+e.colors.hex}}),e._v(" "),e.disableAlpha?e._e():n("checkboard")],1),e._v(" "),n("div",{staticClass:"vc-chrome-sliders"},[n("div",{staticClass:"vc-chrome-hue-wrap"},[n("hue",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1),e._v(" "),e.disableAlpha?e._e():n("div",{staticClass:"vc-chrome-alpha-wrap"},[n("alpha",{on:{change:e.childChange},model:{value:e.colors,callback:function(t){e.colors=t},expression:"colors"}})],1)])]),e._v(" "),e.disableFields?e._e():n("div",{staticClass:"vc-chrome-fields-wrap"},[n("div",{directives:[{name:"show",rawName:"v-show",value:0===e.fieldsIndex,expression:"fieldsIndex === 0"}],staticClass:"vc-chrome-fields"},[n("div",{staticClass:"vc-chrome-field"},[e.hasAlpha?e._e():n("ed-in",{attrs:{label:"hex",value:e.colors.hex},on:{change:e.inputChange}}),e._v(" "),e.hasAlpha?n("ed-in",{attrs:{label:"hex",value:e.colors.hex8},on:{change:e.inputChange}}):e._e()],1)]),e._v(" "),n("div",{directives:[{name:"show",rawName:"v-show",value:1===e.fieldsIndex,expression:"fieldsIndex === 1"}],staticClass:"vc-chrome-fields"},[n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"r",value:e.colors.rgba.r},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"g",value:e.colors.rgba.g},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"b",value:e.colors.rgba.b},on:{change:e.inputChange}})],1),e._v(" "),e.disableAlpha?e._e():n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"a",value:e.colors.a,"arrow-offset":.01,max:1},on:{change:e.inputChange}})],1)]),e._v(" "),n("div",{directives:[{name:"show",rawName:"v-show",value:2===e.fieldsIndex,expression:"fieldsIndex === 2"}],staticClass:"vc-chrome-fields"},[n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"h",value:e.hsl.h},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"s",value:e.hsl.s},on:{change:e.inputChange}})],1),e._v(" "),n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"l",value:e.hsl.l},on:{change:e.inputChange}})],1),e._v(" "),e.disableAlpha?e._e():n("div",{staticClass:"vc-chrome-field"},[n("ed-in",{attrs:{label:"a",value:e.colors.a,"arrow-offset":.01,max:1},on:{change:e.inputChange}})],1)]),e._v(" "),n("div",{staticClass:"vc-chrome-toggle-btn",attrs:{role:"button","aria-label":"Change another color definition"},on:{click:e.toggleViews}},[n("div",{staticClass:"vc-chrome-toggle-icon"},[n("svg",{staticStyle:{width:"24px",height:"24px"},attrs:{viewBox:"0 0 24 24"},on:{mouseover:e.showHighlight,mouseenter:e.showHighlight,mouseout:e.hideHighlight}},[n("path",{attrs:{fill:"#333",d:"M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"}})])]),e._v(" "),n("div",{directives:[{name:"show",rawName:"v-show",value:e.highlight,expression:"highlight"}],staticClass:"vc-chrome-toggle-icon-highlight"})])])])])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o},function(e,t,n){"use strict";function r(e){c||n(144)}Object.defineProperty(t,"__esModule",{value:!0});var i=n(59),o=n.n(i);for(var a in i)"default"!==a&&function(e){n.d(t,e,function(){return i[e]})}(a);var s=n(146),c=!1,l=n(2),u=r,f=l(o.a,s.a,!1,u,null,null);f.options.__file="src/components/Twitter.vue",t.default=f.exports},function(e,t,n){var r=n(145);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(1)("669a48a5",r,!1,{})},function(e,t,n){t=e.exports=n(0)(!1),t.push([e.i,"\n.vc-twitter {\n  background: #fff;\n  border: 0 solid rgba(0,0,0,0.25);\n  box-shadow: 0 1px 4px rgba(0,0,0,0.25);\n  border-radius: 4px;\n  position: relative;\n}\n.vc-twitter-triangle {\n  width: 0px;\n  height: 0px;\n  border-style: solid;\n  border-width: 0 9px 10px 9px;\n  border-color: transparent transparent #fff transparent;\n  position: absolute;\n}\n.vc-twitter-triangle-shadow {\n  width: 0px;\n  height: 0px;\n  border-style: solid;\n  border-width: 0 9px 10px 9px;\n  border-color: transparent transparent rgba(0, 0, 0, .1) transparent;\n  position: absolute;\n}\n.vc-twitter-body {\n  padding: 15px 9px 9px 15px;\n}\n.vc-twitter .vc-editable-input {\n  position: relative;\n}\n.vc-twitter .vc-editable-input input {\n  width: 100px;\n  font-size: 14px;\n  color: #666;\n  border: 0px;\n  outline: none;\n  height: 28px;\n  box-shadow: inset 0 0 0 1px #F0F0F0;\n  box-sizing: content-box;\n  border-radius: 0 4px 4px 0;\n  float: left;\n  padding: 1px;\n  padding-left: 8px;\n}\n.vc-twitter .vc-editable-input span {\n  display: none;\n}\n.vc-twitter-hash {\n  background: #F0F0F0;\n  height: 30px;\n  width: 30px;\n  border-radius: 4px 0 0 4px;\n  float: left;\n  color: #98A1A4;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n.vc-twitter-swatch {\n  width: 30px;\n  height: 30px;\n  float: left;\n  border-radius: 4px;\n  margin: 0 6px 6px 0;\n  cursor: pointer;\n  position: relative;\n  outline: none;\n}\n.vc-twitter-clear {\n  clear: both;\n}\n.vc-twitter-hide-triangle .vc-twitter-triangle {\n  display: none;\n}\n.vc-twitter-hide-triangle .vc-twitter-triangle-shadow {\n  display: none;\n}\n.vc-twitter-top-left-triangle .vc-twitter-triangle{\n  top: -10px;\n  left: 12px;\n}\n.vc-twitter-top-left-triangle .vc-twitter-triangle-shadow{\n  top: -11px;\n  left: 12px;\n}\n.vc-twitter-top-right-triangle .vc-twitter-triangle{\n  top: -10px;\n  right: 12px;\n}\n.vc-twitter-top-right-triangle .vc-twitter-triangle-shadow{\n  top: -11px;\n  right: 12px;\n}\n",""])},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"vc-twitter",class:{"vc-twitter-hide-triangle ":"hide"===e.triangle,"vc-twitter-top-left-triangle ":"top-left"===e.triangle,"vc-twitter-top-right-triangle ":"top-right"===e.triangle},style:{width:"number"==typeof e.width?e.width+"px":e.width}},[n("div",{staticClass:"vc-twitter-triangle-shadow"}),e._v(" "),n("div",{staticClass:"vc-twitter-triangle"}),e._v(" "),n("div",{staticClass:"vc-twitter-body"},[e._l(e.defaultColors,function(t,r){return n("span",{key:r,staticClass:"vc-twitter-swatch",style:{background:t,boxShadow:"0 0 4px "+(e.equal(t)?t:"transparent")},on:{click:function(n){return e.handlerClick(t)}}})}),e._v(" "),n("div",{staticClass:"vc-twitter-hash"},[e._v("#")]),e._v(" "),n("editable-input",{attrs:{label:"#",value:e.hex},on:{change:e.inputChange}}),e._v(" "),n("div",{staticClass:"vc-twitter-clear"})],2)])},i=[];r._withStripped=!0;var o={render:r,staticRenderFns:i};t.a=o}])});
+
+/***/ }),
+
 /***/ 6777:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
@@ -32131,8 +32905,6 @@ render._withStripped = true
 var ShapeDefaults = __webpack_require__(9498);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/AdvancedFill.vue + 4 modules
 var AdvancedFill = __webpack_require__(6777);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/CodeBlock.vue?vue&type=script&lang=js&
 //
 //
@@ -32151,7 +32923,6 @@ var EventBus = __webpack_require__(536);
 //
 //
 //
-
 
 
 
@@ -32181,8 +32952,6 @@ function onThemeUpdate($store, item, value, previousValue) {
     item.textSlots.title.color = 'rgba(0, 0, 0, 1.0)';
     item.textSlots.body.color = 'rgba(0, 0, 0, 1.0)';
   }
-
-  EventBus/* default.emitItemChanged */.Z.emitItemChanged(item.id);
 }
 
 function onLangUpdate($store, item, value, previousValue) {
@@ -32206,7 +32975,7 @@ function highlightItemTextSlot($store, item, foreignObject) {
     assetsPath = '';
   }
 
-  const worker = new Worker(`${assetsPath}/syntax-highlight-worker.js`);
+  const worker = new Worker(`${assetsPath}/js/syntax-highlight-worker.js`);
 
   worker.onmessage = event => {
     const itemTextElement = foreignObject.querySelector('.item-text-element');
@@ -32264,7 +33033,7 @@ const langMapping = {
 };
 const allLanguages = Object.keys(langMapping);
 /* harmony default export */ const CodeBlockvue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   components: {
     AdvancedFill: AdvancedFill/* default */.Z
   },
@@ -32451,19 +33220,6 @@ var render = function () {
   var _c = _vm._self._c || _h
   return _c(
     "g",
-    {
-      on: {
-        click: function ($event) {
-          return _vm.$emit("custom-event", "clicked")
-        },
-        mouseover: function ($event) {
-          return _vm.$emit("custom-event", "mousein")
-        },
-        mouseleave: function ($event) {
-          return _vm.$emit("custom-event", "mouseout")
-        },
-      },
-    },
     [
       _c("advanced-fill", {
         attrs: {
@@ -32527,28 +33283,20 @@ var render = function () {
       _vm.buttonArea.h > 0
         ? _c("g", { staticStyle: { cursor: "pointer" } }, [
             _vm.buttonHovered
-              ? _c("rect", {
+              ? _c("path", {
                   attrs: {
                     fill: _vm.svgButtonHoverFill,
-                    x: _vm.buttonArea.x,
-                    y: _vm.buttonArea.y,
-                    rx: _vm.item.shapeProps.buttonCornerRadius,
-                    width: _vm.buttonArea.w,
-                    height: _vm.buttonArea.h,
                     "stroke-width": _vm.item.shapeProps.buttonStrokeSize + "px",
                     stroke: _vm.item.shapeProps.buttonStrokeColor,
+                    d: _vm.buttonPath,
                   },
                 })
-              : _c("rect", {
+              : _c("path", {
                   attrs: {
                     fill: _vm.svgButtonFill,
-                    x: _vm.buttonArea.x,
-                    y: _vm.buttonArea.y,
-                    rx: _vm.item.shapeProps.buttonCornerRadius,
-                    width: _vm.buttonArea.w,
-                    height: _vm.buttonArea.h,
                     "stroke-width": _vm.item.shapeProps.buttonStrokeSize + "px",
                     stroke: _vm.item.shapeProps.buttonHoverStrokeColor,
+                    d: _vm.buttonPath,
                   },
                 }),
             _vm._v(" "),
@@ -32573,23 +33321,6 @@ var render = function () {
                   ]
                 )
               : _vm._e(),
-            _vm._v(" "),
-            _c("rect", {
-              attrs: {
-                "data-preview-ignore": "true",
-                fill: "rgba(255,255,255,0)",
-                x: _vm.buttonArea.x,
-                y: _vm.buttonArea.y,
-                rx: _vm.item.shapeProps.buttonCornerRadius,
-                width: _vm.buttonArea.w,
-                height: _vm.buttonArea.h,
-              },
-              on: {
-                click: _vm.onLoadSchemeClick,
-                mouseover: _vm.onButtonMouseOver,
-                mouseleave: _vm.onButtonMouseLeave,
-              },
-            }),
           ])
         : _vm._e(),
       _vm._v(" "),
@@ -32617,47 +33348,40 @@ var render = function () {
         : _vm._e(),
       _vm._v(" "),
       !_vm.isLoading && _vm.item.meta && _vm.item.meta.componentLoadFailed
-        ? _c(
-            "g",
-            {
-              staticStyle: { cursor: "pointer" },
-              on: { click: _vm.resetFailureMessage },
-            },
-            [
-              _c("rect", {
+        ? _c("g", { staticStyle: { cursor: "pointer" } }, [
+            _c("rect", {
+              attrs: {
+                x: 0,
+                y: 0,
+                width: _vm.item.area.w,
+                height: _vm.item.area.h,
+                fill: "rgba(250, 70, 70)",
+              },
+            }),
+            _vm._v(" "),
+            _c(
+              "foreignObject",
+              {
                 attrs: {
                   x: 0,
                   y: 0,
                   width: _vm.item.area.w,
                   height: _vm.item.area.h,
-                  fill: "rgba(250, 70, 70)",
                 },
-              }),
-              _vm._v(" "),
-              _c(
-                "foreignObject",
-                {
-                  attrs: {
-                    x: 0,
-                    y: 0,
-                    width: _vm.item.area.w,
-                    height: _vm.item.area.h,
+              },
+              [
+                _c(
+                  "div",
+                  {
+                    staticClass: "item-text-container",
+                    style: _vm.failureMessageStyle,
+                    attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
                   },
-                },
-                [
-                  _c(
-                    "div",
-                    {
-                      staticClass: "item-text-container",
-                      style: _vm.failureMessageStyle,
-                      attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
-                    },
-                    [_c("b", [_vm._v("Loading failed")])]
-                  ),
-                ]
-              ),
-            ]
-          )
+                  [_c("b", [_vm._v("Loading failed")])]
+                ),
+              ]
+            ),
+          ])
         : _vm._e(),
       _vm._v(" "),
       _vm.item.meta && _vm.item.meta.cyclicComponent
@@ -32712,36 +33436,18 @@ var ShapeDefaults = __webpack_require__(9498);
 var StrokePattern = __webpack_require__(4502);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/AdvancedFill.vue + 4 modules
 var AdvancedFill = __webpack_require__(6777);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 // EXTERNAL MODULE: ./src/ui/components/editor/text/ItemText.js
 var ItemText = __webpack_require__(5635);
 // EXTERNAL MODULE: ./src/htmlSanitize.js
 var htmlSanitize = __webpack_require__(3762);
-var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
 // EXTERNAL MODULE: ./src/ui/myMath.js
 var myMath = __webpack_require__(3590);
 // EXTERNAL MODULE: ./node_modules/shortid/index.js
 var shortid = __webpack_require__(4670);
 var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Component.vue?vue&type=script&lang=js&
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
 //
 //
 //
@@ -32833,29 +33539,40 @@ function calculateButtonArea(item, maxWidth, maxHeight) {
   };
 }
 
+function computeButtonPath(item) {
+  const area = calculateButtonArea(item, item.shapeProps.buttonWidth, item.shapeProps.buttonHeight);
+  const R = Math.min(item.shapeProps.buttonCornerRadius, area.w / 2, area.h / 2);
+  const W = area.w;
+  const H = area.h;
+  return `M ${W - R} ${area.y + H}  L ${area.x + R} ${area.y + H} a ${R} ${R} 0 0 1 ${-R} ${-R}  L ${area.x} ${area.y + R}  a ${R} ${R} 0 0 1 ${R} ${-R}   L ${area.x + W - R} ${area.y}   a ${R} ${R} 0 0 1 ${R} ${R}  L ${area.x + W} ${area.y + H - R}   a ${R} ${R} 0 0 1 ${-R} ${R} Z`;
+}
+
 const COMPONENT_LOADED_EVENT = 'Component Loaded';
 const COMPONENT_FAILED = 'Component Failed';
 const COMPONENT_DESTROYED = 'Component Destroyed';
-function generateComponentGoBackButton(componentItem, containerArea, currentScreenTransform) {
+function generateComponentGoBackButton(componentItem, containerItem, currentScreenTransform, screenWidth, screenHeight) {
   if (!componentItem.shapeProps.showBackButton || componentItem.shapeProps.kind !== 'external') {
     return null;
   }
 
   const btnWidth = 95;
   const btnHeight = 30;
+  const sx = componentItem.area.w / (20 * btnWidth);
+  const sy = componentItem.area.h / (20 * btnHeight);
+  const scale = Math.max(sx, sy) * componentItem.shapeProps.backButtonScale;
   return {
     id: componentItem.id + '-go-back-btn',
     shape: 'rect',
     area: {
-      x: containerArea.w - btnWidth - componentItem.shapeProps.backButtonHPad,
-      y: componentItem.shapeProps.backButtonVPad,
+      x: 0 + componentItem.area.w - (btnWidth + componentItem.shapeProps.backButtonHPad) * scale,
+      y: (btnHeight - componentItem.shapeProps.backButtonVPad) * scale,
       w: btnWidth,
       h: btnHeight,
-      sx: 1,
-      sy: 1,
+      sx: scale,
+      sy: scale,
       r: 0,
-      px: 0.5,
-      py: 0.5
+      px: 0,
+      py: 0
     },
     textSlots: {
       body: {
@@ -32863,11 +33580,11 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
         color: componentItem.shapeProps.backButtonTextColor
       }
     },
-    opacity: 70,
+    selfOpacity: 50,
     visibile: true,
     cursor: 'pointer',
     shapeProps: {
-      cornerRadius: 15,
+      cornerRadius: componentItem.shapeProps.backButtonCornerRadius,
       strokeSize: 0,
       fill: componentItem.shapeProps.backButtonFill
     },
@@ -32882,8 +33599,14 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
           args: {
             x: currentScreenTransform.x,
             y: currentScreenTransform.y,
-            scale: currentScreenTransform.scale
+            scale: currentScreenTransform.scale,
+            inBackground: true
           }
+        }, {
+          id: shortid_default().generate(),
+          element: '#' + containerItem.id,
+          method: 'hide',
+          args: {}
         }, {
           id: shortid_default().generate(),
           element: '#' + componentItem.id,
@@ -32915,7 +33638,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
           method: 'set',
           args: {
             field: 'selfOpacity',
-            value: 70,
+            value: 50,
             animated: true,
             animationDuration: 0.2,
             transition: 'ease-in-out',
@@ -32927,7 +33650,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
   };
 }
 /* harmony default export */ const Componentvue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   components: {
     AdvancedFill: AdvancedFill/* default */.Z
   },
@@ -32995,6 +33718,26 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
       }
 
       return textSlots;
+    },
+
+    onMouseDown(editorId, item, customAreaId, x, y) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-down', editorId, item.id, customAreaId);
+    },
+
+    onMouseMove(editorId, item, customAreaId, x, y) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-move', editorId, item.id, customAreaId);
+    },
+
+    computeCustomAreas(item) {
+      if (item.meta && item.meta.componentLoadFailed) {
+        return [];
+      }
+
+      return [{
+        id: 'load-button',
+        cursor: 'pointer',
+        path: computeButtonPath(item)
+      }];
     },
 
     computePath,
@@ -33243,7 +33986,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
       backButtonVPad: {
         type: 'number',
         value: 20,
-        name: 'Back Button Vertical Padding',
+        name: 'Back button vertical padding',
         depends: {
           showBackButton: true,
           kind: 'external'
@@ -33252,7 +33995,25 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
       backButtonHPad: {
         type: 'number',
         value: 20,
-        name: 'Back Button Horizontal Padding',
+        name: 'Back button horizontal padding',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
+      },
+      backButtonCornerRadius: {
+        type: 'number',
+        value: 15,
+        name: 'Back button corner radius',
+        depends: {
+          showBackButton: true,
+          kind: 'external'
+        }
+      },
+      backButtonScale: {
+        type: 'number',
+        value: 1.0,
+        name: 'Back button scale',
         depends: {
           showBackButton: true,
           kind: 'external'
@@ -33260,9 +34021,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
       }
     },
     editorProps: {
-      customTextRendering: true,
-      ignoreEventLayer: true // tells not to draw a layer for events handling, as this shape will handle everything itself
-
+      customTextRendering: true
     },
 
     /**
@@ -33283,21 +34042,25 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
   },
 
   beforeMount() {
-    EventBus/* default.subscribeForItemChanged */.Z.subscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.COMPONENT_LOAD_REQUESTED */.Z.COMPONENT_LOAD_REQUESTED, this.onAnyComponentLoadRequested);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.COMPONENT_LOAD_FAILED */.Z.COMPONENT_LOAD_FAILED, this.onAnyComponentLoadFailed);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.COMPONENT_SCHEME_MOUNTED */.Z.COMPONENT_SCHEME_MOUNTED, this.onAnyComponentMounted);
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-move', this.editorId, this.item.id, this.onMouseMove);
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-down', this.editorId, this.item.id, this.onMouseDown);
+    EditorEventBus/* default.item.changed.specific.$on */.Z.item.changed.specific.$on(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$on */.Z.textSlot.triggered.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$on */.Z.textSlot.canceled.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.component.loadRequested.specific.$on */.Z.component.loadRequested.specific.$on(this.editorId, this.item.id, this.onComponentLoadRequested);
+    EditorEventBus/* default.component.loadFailed.specific.$on */.Z.component.loadFailed.specific.$on(this.editorId, this.item.id, this.onComponentLoadFailed);
+    EditorEventBus/* default.component.mounted.specific.$on */.Z.component.mounted.specific.$on(this.editorId, this.item.id, this.onComponentMounted);
   },
 
   beforeDestroy() {
-    EventBus/* default.unsubscribeForItemChanged */.Z.unsubscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.COMPONENT_LOAD_REQUESTED */.Z.COMPONENT_LOAD_REQUESTED, this.onAnyComponentLoadRequested);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.COMPONENT_LOAD_FAILED */.Z.COMPONENT_LOAD_FAILED, this.onAnyComponentLoadFailed);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.COMPONENT_SCHEME_MOUNTED */.Z.COMPONENT_SCHEME_MOUNTED, this.onAnyComponentMounted);
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-move', this.editorId, this.item.id, this.onMouseMove);
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-down', this.editorId, this.item.id, this.onMouseDown);
+    EditorEventBus/* default.item.changed.specific.$off */.Z.item.changed.specific.$off(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$off */.Z.textSlot.triggered.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$off */.Z.textSlot.canceled.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.component.loadRequested.specific.$off */.Z.component.loadRequested.specific.$off(this.editorId, this.item.id, this.onComponentLoadRequested);
+    EditorEventBus/* default.component.loadFailed.specific.$off */.Z.component.loadFailed.specific.$off(this.editorId, this.item.id, this.onComponentLoadFailed);
+    EditorEventBus/* default.component.mounted.specific.$off */.Z.component.mounted.specific.$off(this.editorId, this.item.id, this.onComponentMounted);
   },
 
   data() {
@@ -33314,9 +34077,25 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
   },
 
   methods: {
+    onMouseMove(customAreaId) {
+      if (customAreaId === 'load-button') {
+        this.onButtonMouseOver();
+      } else {
+        this.onButtonMouseLeave();
+      }
+    },
+
+    onMouseDown(customAreaId) {
+      if (!this.isLoading && this.item.meta && this.item.meta.componentLoadFailed) {
+        this.resetFailureMessage();
+      } else if (customAreaId === 'load-button') {
+        this.onLoadSchemeClick();
+      }
+    },
+
     onLoadSchemeClick() {
       this.isLoading = true;
-      EventBus/* default.emitComponentLoadRequested */.Z.emitComponentLoadRequested(this.item);
+      EditorEventBus/* default.component.loadRequested.specific.$emit */.Z.component.loadRequested.specific.$emit(this.editorId, this.item.id, this.item);
     },
 
     onItemChanged() {
@@ -33364,15 +34143,11 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
     },
 
     onItemTextSlotEditTriggered(item, slotName, area, markupDisabled) {
-      if (item.id === this.item.id) {
-        this.hideTextSlot = slotName;
-      }
+      this.hideTextSlot = slotName;
     },
 
     onItemTextSlotEditCanceled(item, slotName) {
-      if (item.id === this.item.id) {
-        this.hideTextSlot = null;
-      }
+      this.hideTextSlot = null;
     },
 
     onButtonMouseOver() {
@@ -33385,22 +34160,16 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
       this.$forceUpdate();
     },
 
-    onAnyComponentLoadRequested(item) {
-      if (this.item.id === item.id) {
-        this.isLoading = true;
-      }
+    onComponentLoadRequested() {
+      this.isLoading = true;
     },
 
-    onAnyComponentLoadFailed(item) {
-      if (this.item.id === item.id) {
-        this.isLoading = false;
-      }
+    onComponentLoadFailed() {
+      this.isLoading = false;
     },
 
-    onAnyComponentMounted(item) {
-      if (this.item.id === item.id) {
-        this.isLoading = false;
-      }
+    onComponentMounted() {
+      this.isLoading = false;
     },
 
     resetFailureMessage() {
@@ -33410,6 +34179,10 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
 
   },
   computed: {
+    buttonPath() {
+      return computeButtonPath(this.item);
+    },
+
     shapePath() {
       return computePath(this.item);
     },
@@ -33446,7 +34219,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
 
     sanitizedBodyText() {
       if (this.item.textSlots && this.item.textSlots.body) {
-        return htmlSanitize_default()(this.item.textSlots.body.text);
+        return (0,htmlSanitize/* default */.Z)(this.item.textSlots.body.text);
       }
 
       return '';
@@ -33463,7 +34236,7 @@ function generateComponentGoBackButton(componentItem, containerArea, currentScre
         text = this.item.textSlots.button.text;
       }
 
-      return htmlSanitize_default()(text);
+      return (0,htmlSanitize/* default */.Z)(text);
     },
 
     failureMessageStyle() {
@@ -33528,7 +34301,7 @@ component.options.__file = "src/ui/components/editor/items/shapes/Component.vue"
 
 /***/ }),
 
-/***/ 7533:
+/***/ 5357:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -33598,18 +34371,204 @@ var forEach = __webpack_require__(4486);
 var forEach_default = /*#__PURE__*/__webpack_require__.n(forEach);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/StrokePattern.js
 var StrokePattern = __webpack_require__(4502);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 // EXTERNAL MODULE: ./src/ui/logger.js
 var logger = __webpack_require__(2017);
 // EXTERNAL MODULE: ./src/ui/myMath.js
 var myMath = __webpack_require__(3590);
-// EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/ConnectorCaps.js
-var ConnectorCaps = __webpack_require__(125);
+// EXTERNAL MODULE: ./node_modules/lodash/keys.js
+var keys = __webpack_require__(3674);
+var keys_default = /*#__PURE__*/__webpack_require__.n(keys);
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/ConnectorCaps.js
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
+function standard(func) {
+  return {
+    hollow: false,
+    renderFunc: func
+  };
+}
+
+function hollow(func) {
+  return {
+    hollow: true,
+    renderFunc: func
+  };
+}
+
+const allCaps = {
+  'empty': null,
+  'triangle': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, true)),
+  'triangle-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, true)),
+  'triangle-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, true)),
+  'arrow': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, false)),
+  'arrow-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, false)),
+  'arrow-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, false)),
+  'triangle-h': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 2, true)),
+  'triangle-h-1': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 1, true)),
+  'triangle-h-2': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 1, 3, true)),
+  'circle': standard((x, y, Vx, Vy) => {
+    const squaredD = Vx * Vx + Vy * Vy;
+
+    if (squaredD > 0.01) {
+      let r = Math.sqrt(squaredD) / 2;
+      const cx = x + Vx / 2;
+      const cy = y + Vy / 2;
+      return {
+        path: ` M ${cx - r}, ${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0`,
+        hollow: false,
+        entryPoint: {
+          x: x + Vx,
+          y: y + Vy
+        }
+      };
+    }
+
+    return null;
+  }),
+  'circle-cross': hollow((x, y, Vx, Vy) => {
+    const squaredD = Vx * Vx + Vy * Vy;
+
+    if (squaredD > 0.01) {
+      let r = Math.sqrt(squaredD) / 2;
+      const cx = x + Vx / 2;
+      const cy = y + Vy / 2;
+      const d = Math.cos(Math.PI / 4) * r;
+      return {
+        path: ` M ${cx - r}, ${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0 z M ${cx - d} ${cy - d} L ${cx + d} ${cy + d}  M ${cx + d} ${cy - d} L ${cx - d} ${cy + d}`,
+        hollow: true,
+        entryPoint: {
+          x: x + Vx,
+          y: y + Vy
+        }
+      };
+    }
+
+    return null;
+  }),
+  'double-arrow': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, false)),
+  'double-arrow-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, false)),
+  'double-arrow-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, false)),
+  'double-triangle': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, true)),
+  'double-triangle-1': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, true)),
+  'double-triangle-2': standard((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, true)),
+  'double-triangle-h': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 2, true)),
+  'double-triangle-h-1': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 1, true)),
+  'double-triangle-h-2': hollow((x, y, Vx, Vy) => createArrowCap(x, y, Vx, Vy, 2, 3, true)),
+  'diamond': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 0.5)),
+  'diamond-1': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1)),
+  'diamond-2': standard((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1.5)),
+  'diamond-h': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 0.5)),
+  'diamond-h-1': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1)),
+  'diamond-h-2': hollow((x, y, Vx, Vy) => createDiamondCap(x, y, Vx, Vy, 1.5)),
+  'line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 1)),
+  'double-line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 2)),
+  'tripple-line': standard((x, y, Vx, Vy) => createLineCap(x, y, Vx, Vy, 3))
+};
+
+const _capTypes = keys_default()(allCaps);
+
+function getCapTypes() {
+  return _capTypes;
+}
+function createConnectorCap(x, y, Vx, Vy, capType) {
+  const cap = allCaps[capType];
+
+  if (cap) {
+    const result = cap.renderFunc(x, y, Vx, Vy);
+
+    if (cap.hollow) {
+      result.hollow = true;
+    }
+
+    return result;
+  }
+
+  return null;
+}
+
+function createLineCap(x, y, Vx, Vy, numberOfLines) {
+  let path = '';
+  const Bx = Vy / 2;
+  const By = -Vx / 2;
+
+  for (let i = 0; i < numberOfLines; i++) {
+    const x0 = x + Vx * (i + 1) / (numberOfLines + 1);
+    const y0 = y + Vy * (i + 1) / (numberOfLines + 1);
+    const x1 = x0 + Bx;
+    const y1 = y0 + By;
+    const x2 = x0 - Bx;
+    const y2 = y0 - By;
+    path += `M ${x1} ${y1} L ${x2} ${y2} `;
+  }
+
+  return {
+    path: path,
+    hollow: true,
+    prolongLine: true,
+    entryPoint: {
+      x: x + Vx,
+      y: y + Vy
+    }
+  };
+}
+
+function createArrowCap(x, y, Vx, Vy, numberOfArrows, ratio, close) {
+  let path = '';
+  const Bx = Vy / (2 * ratio);
+  const By = -Vx / (2 * ratio);
+
+  for (let i = 0; i < numberOfArrows; i++) {
+    const x0 = x + Vx * i / numberOfArrows;
+    const y0 = y + Vy * i / numberOfArrows;
+    const x1 = x0 + Vx / numberOfArrows + Bx;
+    const y1 = y0 + Vy / numberOfArrows + By;
+    const x2 = x0 + Vx / numberOfArrows - Bx;
+    const y2 = y0 + Vy / numberOfArrows - By;
+    path += `M ${x1} ${y1} L ${x0} ${y0} L ${x2} ${y2} `;
+
+    if (close) {
+      path += ' z ';
+    }
+  }
+
+  return {
+    path: path,
+    hollow: !close,
+    prolongLine: !close,
+    entryPoint: {
+      x: x + Vx,
+      y: y + Vy
+    }
+  };
+}
+
+function createDiamondCap(x, y, Vx, Vy, ratio) {
+  const Bx = ratio * Vy / 2;
+  const By = -ratio * Vx / 2;
+  const x1 = x + Vx / 2 - Bx;
+  const y1 = y + Vy / 2 - By;
+  const x2 = x + Vx;
+  const y2 = y + Vy;
+  const x3 = x + Vx / 2 + Bx;
+  const y3 = y + Vy / 2 + By;
+  return {
+    path: `M ${x} ${y} L ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y3} z`,
+    hollow: false,
+    entryPoint: {
+      x: x + Vx,
+      y: y + Vy
+    }
+  };
+}
 // EXTERNAL MODULE: ./src/ui/utils.js
 var utils = __webpack_require__(4691);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/AdvancedFill.vue + 4 modules
 var AdvancedFill = __webpack_require__(6777);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Connector.vue?vue&type=script&lang=js&
 //
 //
@@ -34343,7 +35302,7 @@ function computeCapByPosition(x1, y1, x2, y2, capSize, capType) {
 
     if (squaredD > 0.0001) {
       const d = Math.sqrt(squaredD);
-      return (0,ConnectorCaps/* createConnectorCap */.g)(x1, y1, dx * capSize / d, dy * capSize / d, capType);
+      return createConnectorCap(x1, y1, dx * capSize / d, dy * capSize / d, capType);
     }
   }
 
@@ -34376,7 +35335,7 @@ function realignNormal(point, secondPoint) {
  * @param {String} attachmentItemSelector
  * @param {Number} attachmentItemPosition
  * @param {ItemModificationContext} context
- * @param {Boolean} isSource 
+ * @param {Boolean} isSource
  * @param {Function} callback - function which is used to pass changed attachment item position
  */
 
@@ -34467,10 +35426,10 @@ function readjustCurveAttachment(schemeContainer, item, curvePoint, secondCurveP
   }
 }
 /**
- * @property {Item} item 
- * @property {Object} schemeContainer 
- * @property {Boolean} isSoft 
- * @property {ItemModificationContext} context 
+ * @property {Item} item
+ * @property {Object} schemeContainer
+ * @property {Boolean} isSoft
+ * @property {ItemModificationContext} context
  * @property {Number} precision - number of digits after point which it should round to
  */
 
@@ -34583,7 +35542,7 @@ const menuItemPoints = [{
 }];
 const groupName = 'Connections';
 /* harmony default export */ const Connectorvue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   components: {
     AdvancedFill: AdvancedFill/* default */.Z
   },
@@ -34913,11 +35872,11 @@ const groupName = 'Connections';
   },
 
   mounted() {
-    EventBus/* default.subscribeForItemChanged */.Z.subscribeForItemChanged(this.item.id, this.onItemChange);
+    EditorEventBus/* default.item.changed.specific.$on */.Z.item.changed.specific.$on(this.editorId, this.item.id, this.onItemChange);
   },
 
   beforeDestroy() {
-    EventBus/* default.unsubscribeForItemChanged */.Z.unsubscribeForItemChanged(this.item.id, this.onItemChange);
+    EditorEventBus/* default.item.changed.specific.$off */.Z.item.changed.specific.$off(this.editorId, this.item.id, this.onItemChange);
   },
 
   data() {
@@ -35241,95 +36200,64 @@ var render = function () {
   return _c(
     "g",
     [
-      _vm._l(_vm.buttons, function (button, buttonIndex) {
-        return _c(
-          "g",
-          {
-            on: {
-              click: function ($event) {
-                return _vm.onClickedButton(buttonIndex)
-              },
-              mouseover: function ($event) {
-                return _vm.onMouseOverButton(buttonIndex)
-              },
-              mouseout: function ($event) {
-                return _vm.onMouseOutButton(buttonIndex)
+      _vm._l(_vm.buttons, function (button) {
+        return _c("g", [
+          _c("path", {
+            staticStyle: {
+              "-webkit-transition": "fill 200ms linear",
+              "-ms-transition": "fill 200ms linear",
+              transition: "fill 200ms linear",
+            },
+            attrs: {
+              d: button.path,
+              fill:
+                _vm.hoveredButtonId === button.id
+                  ? _vm.item.shapeProps.hoverFillColor
+                  : _vm.item.shapeProps.fillColor,
+              stroke: _vm.item.shapeProps.strokeColor,
+              "stroke-width": "1",
+            },
+          }),
+          _vm._v(" "),
+          _c(
+            "foreignObject",
+            {
+              attrs: {
+                x: button.x,
+                y: button.y,
+                width: button.size,
+                height: button.size,
               },
             },
-          },
-          [
-            _c("circle", {
-              staticStyle: {
-                "-webkit-transition": "fill 200ms linear",
-                "-ms-transition": "fill 200ms linear",
-                transition: "fill 200ms linear",
-              },
-              attrs: {
-                cx:
-                  _vm.leftOffset +
-                  buttonIndex * (_vm.buttonSize + _vm.buttonSpaceSize) +
-                  _vm.buttonSize / 2,
-                cy: _vm.buttonSize / 2 + _vm.topOffset,
-                r: _vm.buttonSize / 2,
-                fill: button.fillColor,
-                stroke: _vm.item.shapeProps.strokeColor,
-                "stroke-width": "1",
-              },
-            }),
-            _vm._v(" "),
-            _c(
-              "foreignObject",
-              {
-                attrs: {
-                  x:
-                    _vm.leftOffset +
-                    buttonIndex * (_vm.buttonSize + _vm.buttonSpaceSize),
-                  y: _vm.topOffset,
-                  width: _vm.buttonSize,
-                  height: _vm.buttonSize,
-                },
-              },
-              [
-                _c(
-                  "div",
-                  {
-                    staticStyle: {
-                      width: "100%",
-                      height: "100%",
-                      "text-align": "center",
-                      "vertical-align": "middle",
-                    },
-                    attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+            [
+              _c(
+                "div",
+                {
+                  staticStyle: {
+                    display: "flex",
+                    "align-items": "center",
+                    height: "100%",
+                    "text-align": "center",
+                    "vertical-align": "middle",
                   },
-                  [
-                    _c("i", {
-                      class: [_vm.isPlaying ? button.iconPlaying : button.icon],
-                      style: {
-                        "font-size": _vm.buttonFontSize,
-                        color: _vm.item.shapeProps.strokeColor,
-                      },
-                    }),
-                  ]
-                ),
-              ]
-            ),
-            _vm._v(" "),
-            _c("circle", {
-              staticStyle: { cursor: "pointer" },
-              attrs: {
-                cx:
-                  _vm.leftOffset +
-                  buttonIndex * (_vm.buttonSize + _vm.buttonSpaceSize) +
-                  _vm.buttonSize / 2,
-                cy: _vm.buttonSize / 2 + _vm.topOffset,
-                r: _vm.buttonSize / 2,
-                fill: "rgba(255, 255, 255, 0)",
-                stroke: "rgba(255, 255, 255, 0)",
-                "stroke-width": "1",
-              },
-            }),
-          ]
-        )
+                  attrs: { xmlns: "http://www.w3.org/1999/xhtml" },
+                },
+                [
+                  _c("i", {
+                    class: [_vm.isPlaying ? button.iconPlaying : button.icon],
+                    style: {
+                      display: "inline-block",
+                      width: "100%",
+                      "text-align": "center",
+                      "font-size": _vm.buttonFontSize,
+                      color: _vm.item.shapeProps.strokeColor,
+                    },
+                  }),
+                ]
+              ),
+            ]
+          ),
+        ])
       }),
       _vm._v(" "),
       _vm.currentSection
@@ -35374,8 +36302,8 @@ render._withStripped = true
 // EXTERNAL MODULE: ./node_modules/lodash/forEach.js
 var forEach = __webpack_require__(4486);
 var forEach_default = /*#__PURE__*/__webpack_require__.n(forEach);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/FramePlayer.vue?vue&type=script&lang=js&
 //
 //
@@ -35410,26 +36338,39 @@ var EventBus = __webpack_require__(536);
 //
 //
 //
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
 
+
+const buttonSize = 20;
+const buttonSpaceSize = 4;
+
+function computeButtons(item) {
+  const buttonsCount = item.shapeProps.sections.length > 0 ? 5 : 1;
+  const leftOffset = item.area.w / 2 - (buttonSize * (buttonsCount / 2) + buttonSpaceSize * (buttonsCount - 1) / 2);
+  const buttonBottomPadding = item.shapeProps.sections.length > 0 ? 60 : 30;
+  const topOffset = Math.max(0, item.area.h - buttonBottomPadding);
+  const r = buttonSize / 2;
+
+  const generateButton = (i, id, icon, iconPlaying) => {
+    return {
+      id,
+      icon,
+      iconPlaying,
+      path: `M ${leftOffset + i * (buttonSize + buttonSpaceSize)} ${topOffset + r} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 ${-r * 2},0 z`,
+      x: leftOffset + i * (buttonSize + buttonSpaceSize),
+      y: topOffset,
+      size: buttonSize
+    };
+  };
+
+  if (item.shapeProps.sections.length > 0) {
+    return [generateButton(0, 'fast-backward', 'fas fa-fast-backward', 'fas fa-fast-backward'), generateButton(1, 'step-backward', 'fas fa-step-backward', 'fas fa-step-backward'), generateButton(2, 'play-stop', 'fas fa-play', 'fas fa-pause'), generateButton(3, 'step-forward', 'fas fa-step-forward', 'fas fa-step-forward'), generateButton(4, 'fast-forward', 'fas fa-fast-forward', 'fas fa-fast-forward')];
+  } else {
+    return [generateButton(0, 'play-stop', 'fas fa-play', 'fas fa-pause')];
+  }
+}
 
 /* harmony default export */ const FramePlayervue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   shapeConfig: {
     shapeType: 'vue',
     id: 'frame_player',
@@ -35457,13 +36398,14 @@ var EventBus = __webpack_require__(536);
     },
 
     getTextSlots(item) {
+      const buttonBottomPadding = item.shapeProps.sections.length > 0 ? 60 : 30;
       return [{
         name: 'title',
         area: {
           x: 0,
           y: 0,
           w: item.area.w,
-          h: Math.max(0, item.area.h - 60)
+          h: Math.max(0, item.area.h - buttonBottomPadding)
         }
       }];
     },
@@ -35474,9 +36416,29 @@ var EventBus = __webpack_require__(536);
       return `M 0 0   L ${w} 0  L ${w} ${h}  L 0 ${h} z`;
     },
 
-    editorProps: {
-      ignoreEventLayer: true
+    onMouseMove(editorId, item, areaId) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-move', editorId, item.id, areaId);
     },
+
+    onMouseOut(editorId, item) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-out', editorId, item.id);
+    },
+
+    onMouseDown(editorId, item, areaId) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-down', editorId, item.id, areaId);
+    },
+
+    computeCustomAreas(item) {
+      const buttons = computeButtons(item);
+      return buttons.map(button => {
+        return {
+          id: button.id,
+          cursor: 'pointer',
+          path: button.path
+        };
+      });
+    },
+
     args: {
       totalFrames: {
         type: 'number',
@@ -35525,7 +36487,16 @@ var EventBus = __webpack_require__(536);
   },
 
   beforeMount() {
-    EventBus/* default.emitFramePlayerPrepared */.Z.emitFramePlayerPrepared(this.item, this.createFrameCallbacks());
+    EditorEventBus/* default.framePlayer.prepared.$emit */.Z.framePlayer.prepared.$emit(this.editorId, this.item, this.createFrameCallbacks());
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-move', this.editorId, this.item.id, this.onMouseMove);
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-down', this.editorId, this.item.id, this.onMouseDown);
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-out', this.editorId, this.item.id, this.onMouseOut);
+  },
+
+  beforeDestroy() {
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-move', this.editorId, this.item.id, this.onMouseMove);
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-down', this.editorId, this.item.id, this.onMouseDown);
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-out', this.editorId, this.item.id, this.onMouseOut);
   },
 
   data() {
@@ -35559,64 +36530,42 @@ var EventBus = __webpack_require__(536);
       sectionsMapping[i] = currentSection;
     }
 
-    let buttons = [{
-      icon: 'fas fa-play',
-      iconPlaying: 'fas fa-pause',
-      click: () => {
-        this.onClickedTogglePlay();
-      }
-    }];
-
-    if (this.item.shapeProps.sections.length > 0) {
-      buttons = [{
-        icon: 'fas fa-fast-backward',
-        iconPlaying: 'fas fa-fast-backward',
-        click: () => {
-          this.onClickedToBegin();
-        }
-      }, {
-        icon: 'fas fa-step-backward',
-        iconPlaying: 'fas fa-step-backward',
-        click: () => {
-          this.onClickedLeft();
-        }
-      }].concat(buttons).concat([{
-        icon: 'fas fa-step-forward',
-        iconPlaying: 'fas fa-step-forward',
-        click: () => {
-          this.onClickPlayToNext();
-        }
-      }, {
-        icon: 'fas fa-fast-forward',
-        iconPlaying: 'fas fa-fast-forward',
-        click: () => {
-          this.onClickFastRight();
-        }
-      }]);
-    }
-
-    ;
-    buttons.forEach(button => {
-      button.fillColor = this.item.shapeProps.fillColor;
-    });
     return {
       currentFrame: 1,
       isPlaying: false,
       intervalId: null,
-      buttonSize: 20,
-      buttonSpaceSize: 4,
       buttonFontSize: '10px',
       sectionsMapping,
       sectionsByNumber,
       currentSection: firstSection,
       totalSections: this.item.shapeProps.sections.length,
-      buttons
+      hoveredButtonId: null,
+      buttons: computeButtons(this.item),
+      buttonSize
     };
   },
 
   methods: {
-    onClickedButton(buttonIndex) {
-      this.buttons[buttonIndex].click();
+    onMouseMove(areaId) {
+      this.hoveredButtonId = areaId;
+    },
+
+    onMouseOut() {
+      this.hoveredButtonId = null;
+    },
+
+    onMouseDown(areaId) {
+      if (areaId === 'fast-backward') {
+        this.onClickedToBegin();
+      } else if (areaId === 'step-backward') {
+        this.onClickedLeft();
+      } else if (areaId === 'play-stop') {
+        this.onClickedTogglePlay();
+      } else if (areaId === 'step-forward') {
+        this.onClickPlayToNext();
+      } else if (areaId === 'fast-forward') {
+        this.onClickFastRight();
+      }
     },
 
     onClickedToBegin() {
@@ -35728,28 +36677,10 @@ var EventBus = __webpack_require__(536);
         item: this.item,
         frame: this.currentFrame
       });
-    },
-
-    onMouseOverButton(idx) {
-      forEach_default()(this.buttons, (button, i) => {
-        if (i === idx) {
-          button.fillColor = this.item.shapeProps.hoverFillColor;
-        } else {
-          button.fillColor = this.item.shapeProps.fillColor;
-        }
-      });
-    },
-
-    onMouseOutButton(idx) {
-      this.buttons[idx].fillColor = this.item.shapeProps.fillColor;
     }
 
   },
   computed: {
-    leftOffset() {
-      return this.item.area.w / 2 - (this.buttonSize * (this.buttons.length / 2) + this.buttonSpaceSize * (this.buttons.length - 1) / 2);
-    },
-
     framesTextStyle() {
       return {
         'color': this.item.textSlots.title.color,
@@ -36090,66 +37021,58 @@ var render = function () {
         : _vm._e(),
       _vm._v(" "),
       _c("g", { attrs: { transform: "translate(0 " + _vm.imageY + ")" } }, [
-        _vm.item.shapeProps.image
-          ? _c("defs", [
-              _c(
-                "clipPath",
-                { attrs: { id: "image-crop-clip-path-" + _vm.item.id } },
-                [
-                  _c("path", {
-                    attrs: {
-                      d:
-                        "M 0 0  L " +
-                        _vm.item.area.w +
-                        " 0   L " +
-                        _vm.item.area.w +
-                        " " +
-                        _vm.item.area.h +
-                        "  L 0 " +
-                        _vm.item.area.h +
-                        " Z",
-                      "data-item-id": _vm.item.id,
-                      "stroke-width": "0px",
-                      stroke: "rgba(255, 255, 255, 0)",
-                      fill: "rgba(255, 255, 255, 0)",
-                    },
-                  }),
-                ]
-              ),
-              _vm._v(" "),
-              _c(
-                "pattern",
-                {
-                  attrs: {
-                    id: "image-fill-" + _vm.item.id,
-                    patternUnits: "userSpaceOnUse",
-                    width: _vm.imageWidth,
-                    height: _vm.imageHeight,
-                  },
-                },
-                [
-                  _c("image", {
-                    attrs: {
-                      "xlink:href": _vm.item.shapeProps.image,
-                      x: -_vm.item.shapeProps.crop.x * _vm.imageWidth,
-                      y: -_vm.item.shapeProps.crop.y * _vm.imageHeight,
-                      width:
-                        _vm.imageWidth *
-                        (1 +
-                          _vm.item.shapeProps.crop.x +
-                          _vm.item.shapeProps.crop.w),
-                      height:
-                        _vm.imageHeight *
-                        (1 +
-                          _vm.item.shapeProps.crop.y +
-                          _vm.item.shapeProps.crop.h),
-                      preserveAspectRatio: _vm.imagePreserveAspectRatio,
-                    },
-                  }),
-                ]
-              ),
-            ])
-          : _vm._e(),
+        _c(
+          "clipPath",
+          { attrs: { id: "image-crop-clip-path-" + _vm.item.id } },
+          [
+            _c("path", {
+              attrs: {
+                d:
+                  "M 0 0  L " +
+                  _vm.item.area.w +
+                  " 0   L " +
+                  _vm.item.area.w +
+                  " " +
+                  _vm.item.area.h +
+                  "  L 0 " +
+                  _vm.item.area.h +
+                  " Z",
+                "data-item-id": _vm.item.id,
+                "stroke-width": "0px",
+                stroke: "rgba(255, 255, 255, 0)",
+                fill: "rgba(255, 255, 255, 0)",
+              },
+            }),
+          ]
+        ),
+        _vm._v(" "),
+        _c(
+          "pattern",
+          {
+            attrs: {
+              id: "image-fill-" + _vm.item.id,
+              patternUnits: "userSpaceOnUse",
+              width: _vm.imageWidth,
+              height: _vm.imageHeight,
+            },
+          },
+          [
+            _c("image", {
+              attrs: {
+                "xlink:href": _vm.imagePath,
+                x: -_vm.item.shapeProps.crop.x * _vm.imageWidth,
+                y: -_vm.item.shapeProps.crop.y * _vm.imageHeight,
+                width:
+                  _vm.imageWidth *
+                  (1 + _vm.item.shapeProps.crop.x + _vm.item.shapeProps.crop.w),
+                height:
+                  _vm.imageHeight *
+                  (1 + _vm.item.shapeProps.crop.y + _vm.item.shapeProps.crop.h),
+                preserveAspectRatio: _vm.imagePreserveAspectRatio,
+              },
+            }),
+          ]
+        ),
         _vm._v(" "),
         _c(
           "g",
@@ -36159,19 +37082,17 @@ var render = function () {
             },
           },
           [
-            _vm.item.shapeProps.image
-              ? _c("rect", {
-                  attrs: {
-                    x: 0,
-                    y: 0,
-                    width: _vm.imageWidth,
-                    height: _vm.imageHeight,
-                    "stroke-width": _vm.item.shapeProps.strokeSize + "px",
-                    stroke: _vm.item.shapeProps.strokeColor,
-                    fill: "url(#image-fill-" + _vm.item.id + ")",
-                  },
-                })
-              : _vm._e(),
+            _c("rect", {
+              attrs: {
+                x: 0,
+                y: 0,
+                width: _vm.imageWidth,
+                height: _vm.imageHeight,
+                "stroke-width": _vm.item.shapeProps.strokeSize + "px",
+                stroke: _vm.item.shapeProps.strokeColor,
+                fill: "url(#image-fill-" + _vm.item.id + ")",
+              },
+            }),
           ]
         ),
       ]),
@@ -36240,8 +37161,6 @@ var AdvancedFill = __webpack_require__(6777);
 //
 //
 //
-//
-//
 
 
 
@@ -36251,6 +37170,7 @@ const computePath = item => {
   return `M 0 0  L ${W} 0  L ${W} ${H} L 0 ${H} Z`;
 };
 
+const missingSchemePreview = '/images/missing-scheme-preview.png';
 /* harmony default export */ const Imagevue_type_script_lang_js_ = ({
   props: ['item'],
   components: {
@@ -36267,7 +37187,7 @@ const computePath = item => {
       description: 'It lets you upload an image or specify a link to external image',
       item: {
         shapeProps: {
-          image: '/assets/images/missing-scheme-preview.png'
+          image: ''
         }
       }
     }],
@@ -36412,6 +37332,14 @@ const computePath = item => {
       }
 
       return this.item.area.h;
+    },
+
+    imagePath() {
+      if (!this.item.shapeProps.image) {
+        return this.$store.getters.assetsPath + missingSchemePreview;
+      }
+
+      return this.item.shapeProps.image;
     }
 
   }
@@ -36471,7 +37399,6 @@ var render = function () {
               "xlink:href": _vm.item.shapeProps.url,
               target: _vm.target,
             },
-            on: { click: _vm.onLinkClick },
           },
           [
             _vm.item.shapeProps.showIcon
@@ -36534,11 +37461,10 @@ var map_default = /*#__PURE__*/__webpack_require__.n(map);
 var LinkTypes = __webpack_require__(9874);
 // EXTERNAL MODULE: ./src/htmlSanitize.js
 var htmlSanitize = __webpack_require__(3762);
-var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 // EXTERNAL MODULE: ./src/ui/components/editor/text/ItemText.js
 var ItemText = __webpack_require__(5635);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Link.vue?vue&type=script&lang=js&
 //
 //
@@ -36565,7 +37491,7 @@ var ItemText = __webpack_require__(5635);
 
 
 /* harmony default export */ const Linkvue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   shapeConfig: {
     shapeType: 'vue',
     id: 'link',
@@ -36588,7 +37514,8 @@ var ItemText = __webpack_require__(5635);
             halign: 'left',
             valign: 'top'
           }
-        }
+        },
+        cursor: 'pointer'
       }
     }],
 
@@ -36599,7 +37526,6 @@ var ItemText = __webpack_require__(5635);
     },
 
     editorProps: {
-      ignoreEventLayer: true,
       customTextRendering: true
     },
 
@@ -36613,6 +37539,10 @@ var ItemText = __webpack_require__(5635);
           h: item.area.h
         }
       }];
+    },
+
+    onMouseDown(editorId, item) {
+      EditorEventBus/* default.item.custom.$emit */.Z.item.custom.$emit('mouse-down', editorId, item.id);
     },
 
     args: {
@@ -36655,15 +37585,17 @@ var ItemText = __webpack_require__(5635);
   },
 
   beforeMount() {
-    EventBus/* default.subscribeForItemChanged */.Z.subscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.item.custom.$on */.Z.item.custom.$on('mouse-down', this.editorId, this.item.id, this.onLinkClick);
+    EditorEventBus/* default.item.changed.specific.$on */.Z.item.changed.specific.$on(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$on */.Z.textSlot.triggered.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$on */.Z.textSlot.canceled.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
   },
 
   beforeDestroy() {
-    EventBus/* default.unsubscribeForItemChanged */.Z.unsubscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.item.custom.$off */.Z.item.custom.$off('mouse-down', this.editorId, this.item.id, this.onLinkClick);
+    EditorEventBus/* default.item.changed.specific.$off */.Z.item.changed.specific.$off(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$off */.Z.textSlot.triggered.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$off */.Z.textSlot.canceled.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
   },
 
   data() {
@@ -36680,13 +37612,8 @@ var ItemText = __webpack_require__(5635);
       return style;
     },
 
-    onLinkClick(event) {
-      if (this.item.shapeProps.url.startsWith('/')) {
-        window.location = url;
-        event.preventDefault();
-      }
-
-      return false;
+    onLinkClick() {
+      window.location = this.item.shapeProps.url;
     },
 
     calculateTextOffset() {
@@ -36702,15 +37629,11 @@ var ItemText = __webpack_require__(5635);
     },
 
     onItemTextSlotEditTriggered(item, slotName, area, markupDisabled) {
-      if (item.id === this.item.id) {
-        this.hideTextSlot = true;
-      }
+      this.hideTextSlot = true;
     },
 
     onItemTextSlotEditCanceled(item, slotName) {
-      if (item.id === this.item.id) {
-        this.hideTextSlot = false;
-      }
+      this.hideTextSlot = false;
     }
 
   },
@@ -36732,7 +37655,7 @@ var ItemText = __webpack_require__(5635);
     },
 
     linkHtml() {
-      return htmlSanitize_default()(this.item.textSlots.link.text);
+      return (0,htmlSanitize/* default */.Z)(this.item.textSlots.link.text);
     },
 
     textOffset() {
@@ -36817,21 +37740,8 @@ var render = function () {
           fill: _vm.fill,
         },
       }),
-      _vm._v(" "),
-      _vm._l(_vm.caps, function (cap) {
-        return _c("path", {
-          attrs: {
-            d: cap.path,
-            "data-item-id": _vm.item.id,
-            stroke: _vm.item.shapeProps.strokeColor,
-            "stroke-width": _vm.item.shapeProps.strokeSize,
-            fill: cap.fill,
-            "stroke-linejoin": "round",
-          },
-        })
-      }),
     ],
-    2
+    1
   )
 }
 var staticRenderFns = []
@@ -36844,16 +37754,14 @@ render._withStripped = true
 var AdvancedFill = __webpack_require__(6777);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/StrokePattern.js
 var StrokePattern = __webpack_require__(4502);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 // EXTERNAL MODULE: ./src/ui/logger.js
 var logger = __webpack_require__(2017);
 // EXTERNAL MODULE: ./src/ui/myMath.js
 var ui_myMath = __webpack_require__(3590);
-// EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/ConnectorCaps.js
-var ConnectorCaps = __webpack_require__(125);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/StandardCurves.js
 var StandardCurves = __webpack_require__(8270);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Path.vue?vue&type=script&lang=js&
 //
 //
@@ -36871,15 +37779,6 @@ var StandardCurves = __webpack_require__(8270);
 //
 //
 //
-//
-//
-//
-//
-//
-//
-//
-//
-
 
 
 
@@ -36908,9 +37807,9 @@ function computePath(item) {
 ;
 /**
  * Takes points of the path and simplifies them (tries to delete as many points as possible)
- * @property {Array} points - points of the path 
+ * @property {Array} points - points of the path
  * @property {Number} epsilon - minimum distance of the points to keep (used in Ramer-Douglas-Peucker algorithm)
- * @returns {Array} simplified path points 
+ * @returns {Array} simplified path points
  */
 
 function simplifyPathPoints(points, epsilon) {
@@ -36943,10 +37842,10 @@ function simplifyPathPoints(points, epsilon) {
   return newPoints;
 }
 /**
- * @property {Item} item 
- * @property {Object} schemeContainer 
- * @property {Boolean} isSoft 
- * @property {ItemModificationContext} context 
+ * @property {Item} item
+ * @property {Object} schemeContainer
+ * @property {Boolean} isSoft
+ * @property {ItemModificationContext} context
  * @property {Number} precision - number of digits after point which it should round to
  */
 
@@ -36984,7 +37883,7 @@ function getSnappers(item) {
 }
 
 /* harmony default export */ const Pathvue_type_script_lang_js_ = ({
-  props: ['item'],
+  props: ['item', 'editorId'],
   components: {
     AdvancedFill: AdvancedFill/* default */.Z
   },
@@ -37039,53 +37938,22 @@ function getSnappers(item) {
         value: [],
         name: 'Paths',
         hidden: true
-      },
-      sourceCap: {
-        type: 'path-cap',
-        value: 'empty',
-        name: 'Source Cap'
-      },
-      sourceCapSize: {
-        type: 'number',
-        value: 20,
-        name: 'Source Cap Size'
-      },
-      sourceCapFill: {
-        type: 'color',
-        value: 'rgba(30,30,30,1.0)',
-        name: 'Source Cap Fill'
-      },
-      destinationCap: {
-        type: 'path-cap',
-        value: 'empty',
-        name: 'Destination Cap'
-      },
-      destinationCapSize: {
-        type: 'number',
-        value: 20,
-        name: 'Destination Cap Size'
-      },
-      destinationCapFill: {
-        type: 'color',
-        value: 'rgba(30,30,30,1.0)',
-        name: 'Destination Cap Fill'
       }
     }
   },
 
   mounted() {
-    EventBus/* default.subscribeForItemChanged */.Z.subscribeForItemChanged(this.item.id, this.onItemChange);
+    EditorEventBus/* default.item.changed.specific.$on */.Z.item.changed.specific.$on(this.editorId, this.item.id, this.onItemChange);
   },
 
   beforeDestroy() {
-    EventBus/* default.unsubscribeForItemChanged */.Z.unsubscribeForItemChanged(this.item.id, this.onItemChange);
+    EditorEventBus/* default.item.changed.specific.$off */.Z.item.changed.specific.$off(this.editorId, this.item.id, this.onItemChange);
   },
 
   data() {
     const shapePath = computePath(this.item);
     return {
-      shapePath: shapePath,
-      caps: this.computeCaps(shapePath)
+      shapePath: shapePath
     };
   },
 
@@ -37093,55 +37961,7 @@ function getSnappers(item) {
     onItemChange() {
       log.info('onItemChange', this.item.id, this.item.name, this.item);
       this.shapePath = computePath(this.item);
-      this.caps = this.computeCaps(this.shapePath);
-      log.info('computed path and caps', this.item.id, this.item.name, this.shapePath, this.caps);
       this.$forceUpdate();
-    },
-
-    computeCaps(svgPath) {
-      const caps = [];
-      let sourceCap = this.item.shapeProps.sourceCap || 'empty';
-      let destinationCap = this.item.shapeProps.destinationCap || 'empty';
-
-      if (sourceCap === 'empty' && destinationCap === 'empty') {
-        return caps;
-      }
-
-      const shadowSvgPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      shadowSvgPath.setAttribute('d', svgPath);
-      const totalLength = shadowSvgPath.getTotalLength();
-
-      if (totalLength < 3) {
-        return caps;
-      }
-
-      let cap = this.computeCapByPosition(shadowSvgPath, 0, this.item.shapeProps.sourceCapSize, sourceCap, this.item.shapeProps.sourceCapFill);
-
-      if (cap) {
-        caps.push(cap);
-      }
-
-      cap = this.computeCapByPosition(shadowSvgPath, totalLength, totalLength - this.item.shapeProps.destinationCapSize, destinationCap, this.item.shapeProps.destinationCapFill);
-
-      if (cap) {
-        caps.push(cap);
-      }
-
-      return caps;
-    },
-
-    computeCapByPosition(shadowSvgPath, d1, d2, capType, capFill) {
-      if (capType !== 'empty') {
-        const p1 = shadowSvgPath.getPointAtLength(d1);
-        const p2 = shadowSvgPath.getPointAtLength(d2);
-        const squaredD = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y);
-
-        if (squaredD > 0.01) {
-          return (0,ConnectorCaps/* createConnectorCap */.g)(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y, capType, capFill);
-        }
-      }
-
-      return null;
     }
 
   },
@@ -37500,6 +38320,3868 @@ var component = (0,componentNormalizer/* default */.Z)(
 if (false) { var api; }
 component.options.__file = "src/ui/components/editor/items/shapes/StickyNote.vue"
 /* harmony default export */ const StickyNote = (component.exports);
+
+/***/ }),
+
+/***/ 14:
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+
+// EXPORTS
+__webpack_require__.d(__webpack_exports__, {
+  "Z": () => (/* binding */ Table)
+});
+
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Table.vue?vue&type=template&id=3f519d3b&
+var render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "g",
+    [
+      _c("advanced-fill", {
+        attrs: {
+          fillId: "fill-pattern-" + _vm.item.id,
+          fill: _vm.item.shapeProps.fill,
+          area: _vm.item.area,
+        },
+      }),
+      _vm._v(" "),
+      _c("advanced-fill", {
+        attrs: {
+          fillId: "fill-pattern-" + _vm.item.id + "-header",
+          fill: _vm.item.shapeProps.headerFill,
+          area: _vm.item.area,
+        },
+      }),
+      _vm._v(" "),
+      _c("advanced-fill", {
+        attrs: {
+          fillId: "fill-pattern-" + _vm.item.id + "-secondary-fill",
+          fill: _vm.item.shapeProps.rowSecondaryFill,
+          area: _vm.item.area,
+        },
+      }),
+      _vm._v(" "),
+      _c(
+        "g",
+        _vm._l(_vm.cells, function (c) {
+          return _c("rect", {
+            attrs: {
+              x: c.area.x,
+              y: c.area.y,
+              width: c.area.w,
+              height: c.area.h,
+              stroke: "none",
+              fill: c.fill,
+            },
+          })
+        }),
+        0
+      ),
+      _vm._v(" "),
+      _vm.item.shapeProps.style === "simple"
+        ? _c(
+            "g",
+            [
+              _c("path", {
+                attrs: {
+                  d: _vm.outlinePath,
+                  stroke: _vm.item.shapeProps.stroke,
+                  "stroke-width": _vm.item.shapeProps.strokeSize + "px",
+                  fill: "none",
+                },
+              }),
+              _vm._v(" "),
+              _vm._l(_vm.gridLines, function (l) {
+                return _c("line", {
+                  attrs: {
+                    stroke: _vm.item.shapeProps.stroke,
+                    "stroke-width": _vm.item.shapeProps.strokeSize + "px",
+                    x1: l.x1,
+                    y1: l.y1,
+                    x2: l.x2,
+                    y2: l.y2,
+                  },
+                })
+              }),
+            ],
+            2
+          )
+        : _vm._e(),
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/Table.vue?vue&type=template&id=3f519d3b&
+
+// EXTERNAL MODULE: ./src/ui/components/editor/items/AdvancedFill.vue + 4 modules
+var AdvancedFill = __webpack_require__(6777);
+// EXTERNAL MODULE: ./src/ui/myMath.js
+var myMath = __webpack_require__(3590);
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/TablePropertiesEditor.vue?vue&type=template&id=42bcd84a&
+var TablePropertiesEditorvue_type_template_id_42bcd84a_render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    [
+      _c("div", { staticClass: "row" }, [
+        _c(
+          "div",
+          { staticClass: "col-1 padded" },
+          [
+            _c("NumberTextfield", {
+              attrs: {
+                value: _vm.item.shapeProps.columns,
+                min: 1,
+                max: 100,
+                name: "Columns",
+              },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "columns",
+                    "number",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+        _vm._v(" "),
+        _c(
+          "div",
+          { staticClass: "col-1 padded" },
+          [
+            _c("NumberTextfield", {
+              attrs: {
+                value: _vm.item.shapeProps.rows,
+                min: 1,
+                max: 100,
+                name: "Rows",
+              },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "rows",
+                    "number",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+      ]),
+      _vm._v(" "),
+      _c("div", { staticClass: "row" }, [
+        _c(
+          "div",
+          { staticClass: "col-1 padded", attrs: { title: "Fill" } },
+          [
+            _c("AdvancedColorEditor", {
+              attrs: { value: _vm.item.shapeProps.fill, disabled: false },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "fill",
+                    "advanced-color",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+        _vm._v(" "),
+        _c(
+          "div",
+          { staticClass: "col-1 padded", attrs: { title: "Secondary fill" } },
+          [
+            _c("AdvancedColorEditor", {
+              attrs: {
+                value: _vm.item.shapeProps.rowSecondaryFill,
+                disabled: !_vm.item.shapeProps.oddEvenFill,
+              },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "rowSecondaryFill",
+                    "advanced-color",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+        _vm._v(" "),
+        _c(
+          "div",
+          { staticClass: "col-1 padded", attrs: { title: "Header fill" } },
+          [
+            _c("AdvancedColorEditor", {
+              attrs: {
+                value: _vm.item.shapeProps.headerFill,
+                disabled: _vm.item.shapeProps.header === "none",
+              },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "headerFill",
+                    "advanced-color",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+        _vm._v(" "),
+        _c(
+          "div",
+          { staticClass: "col-1 padded", attrs: { title: "Stroke color" } },
+          [
+            _c("ColorPicker", {
+              attrs: {
+                color: _vm.item.shapeProps.stroke,
+                disabled: _vm.item.shapeProps.style === "flat",
+              },
+              on: {
+                input: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "stroke",
+                    "color",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+      ]),
+      _vm._v(" "),
+      _c("div", { staticClass: "row" }, [
+        _c(
+          "div",
+          { staticClass: "col-1 padded" },
+          [
+            _c("NumberTextfield", {
+              attrs: {
+                value: _vm.item.shapeProps.strokeSize,
+                min: 1,
+                max: 100,
+                name: "Stroke size",
+                disabled: _vm.item.shapeProps.style === "flat",
+              },
+              on: {
+                changed: function ($event) {
+                  return _vm.$emit(
+                    "shape-prop-changed",
+                    "strokeSize",
+                    "number",
+                    arguments[0]
+                  )
+                },
+              },
+            }),
+          ],
+          1
+        ),
+      ]),
+      _vm._v(" "),
+      _c("div", { staticClass: "hint hint-small text-centered" }, [
+        _vm._v("\n            Choose table style\n    "),
+      ]),
+      _vm._v(" "),
+      _vm._l(_vm.tableStyles, function (tableStyle) {
+        return _c(
+          "div",
+          {
+            staticClass: "toggle-button",
+            on: {
+              click: function ($event) {
+                return _vm.applyTableStyle(tableStyle)
+              },
+            },
+          },
+          [
+            _c(
+              "svg",
+              {
+                attrs: {
+                  width: tableStyle.iconWidth + "px",
+                  height: tableStyle.iconHeight + "px",
+                },
+              },
+              [
+                _c(
+                  "g",
+                  { attrs: { transform: "translate(3,3)" } },
+                  [
+                    _vm._l(tableStyle.cells, function (cell) {
+                      return _c("rect", {
+                        attrs: {
+                          x: cell.x,
+                          y: cell.y,
+                          width: cell.w,
+                          height: cell.h,
+                          fill: cell.color,
+                          stroke: "none",
+                        },
+                      })
+                    }),
+                    _vm._v(" "),
+                    _vm._l(tableStyle.gridLines, function (line) {
+                      return _c("line", {
+                        attrs: {
+                          x1: line.x1,
+                          y1: line.y1,
+                          x2: line.x2,
+                          y2: line.y2,
+                          stroke: "#aaaaaa",
+                        },
+                      })
+                    }),
+                  ],
+                  2
+                ),
+              ]
+            ),
+          ]
+        )
+      }),
+      _vm._v(" "),
+      _c("div", { staticStyle: { clear: "both" } }),
+    ],
+    2
+  )
+}
+var TablePropertiesEditorvue_type_template_id_42bcd84a_staticRenderFns = []
+TablePropertiesEditorvue_type_template_id_42bcd84a_render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/TablePropertiesEditor.vue?vue&type=template&id=42bcd84a&
+
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/NumberTextfield.vue?vue&type=template&id=05a675dd&
+var NumberTextfieldvue_type_template_id_05a675dd_render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    {
+      staticClass: "number-textfield-container",
+      class: { disabled: _vm.disabled },
+    },
+    [
+      _vm.name
+        ? _c("div", { ref: "label", staticClass: "label" }, [
+            _vm._v(_vm._s(_vm.name)),
+          ])
+        : _vm._e(),
+      _vm._v(" "),
+      !_vm.name && _vm.icon
+        ? _c("div", { ref: "icon", staticClass: "label" }, [
+            _c("i", { class: _vm.icon }),
+          ])
+        : _vm._e(),
+      _vm._v(" "),
+      _c("div", { staticClass: "wrapper" }, [
+        _c("input", {
+          directives: [
+            {
+              name: "model",
+              rawName: "v-model",
+              value: _vm.text,
+              expression: "text",
+            },
+          ],
+          attrs: { type: "text", disabled: _vm.disabled },
+          domProps: { value: _vm.text },
+          on: {
+            blur: _vm.submitEvent,
+            keydown: function ($event) {
+              if (
+                !$event.type.indexOf("key") &&
+                _vm._k($event.keyCode, "enter", 13, $event.key, "Enter")
+              ) {
+                return null
+              }
+              return _vm.submitEvent.apply(null, arguments)
+            },
+            input: function ($event) {
+              if ($event.target.composing) {
+                return
+              }
+              _vm.text = $event.target.value
+            },
+          },
+        }),
+        _vm._v(" "),
+        _c("div", { staticClass: "step-controls" }, [
+          _c(
+            "span",
+            {
+              staticClass: "step step-up",
+              on: {
+                click: function ($event) {
+                  return _vm.onStepClicked(1)
+                },
+                mousedown: _vm.onMouseDownIncrement,
+              },
+            },
+            [_c("i", { staticClass: "fas fa-caret-up" })]
+          ),
+          _vm._v(" "),
+          _c(
+            "span",
+            {
+              staticClass: "step step-down",
+              on: {
+                click: function ($event) {
+                  return _vm.onStepClicked(-1)
+                },
+                mousedown: _vm.onMouseDownDecrement,
+              },
+            },
+            [_c("i", { staticClass: "fas fa-caret-down" })]
+          ),
+        ]),
+      ]),
+    ]
+  )
+}
+var NumberTextfieldvue_type_template_id_05a675dd_staticRenderFns = []
+NumberTextfieldvue_type_template_id_05a675dd_render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/NumberTextfield.vue?vue&type=template&id=05a675dd&
+
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/NumberTextfield.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+function numberToText(value) {
+  if (value % 1 === 0) {
+    return '' + value;
+  }
+
+  let text = '';
+
+  if (Math.floor(Math.abs(value)) > 0) {
+    text = '' + myMath/* default.roundPrecise */.Z.roundPrecise(value, 3);
+  } else {
+    text = '' + myMath/* default.roundPrecise */.Z.roundPrecise(value, 4);
+  }
+
+  return text;
+}
+
+/* harmony default export */ const NumberTextfieldvue_type_script_lang_js_ = ({
+  props: {
+    value: [Number, String, Object],
+    format: {
+      type: String,
+      default: 'float'
+    },
+    name: {
+      type: String,
+      default: null
+    },
+    icon: {
+      type: String,
+      default: null
+    },
+    min: {
+      type: Number,
+      default: null
+    },
+    max: {
+      type: Number,
+      default: null
+    },
+    disabled: {
+      type: Boolean,
+      default: false
+    },
+    incrementSpeed: {
+      type: Number,
+      default: 1
+    },
+    incrementMaxSpeed: {
+      type: Number,
+      default: 50
+    },
+    incrementAcceleration: {
+      type: Number,
+      default: 0.15
+    }
+  },
+
+  beforeDestroy() {
+    document.body.removeEventListener('mouseup', this.onMouseUp);
+  },
+
+  data() {
+    return {
+      text: numberToText(this.value),
+      number: this.value,
+      autoIncrementDelayTimeoutId: -1,
+      autoIncrementDirection: 1,
+      autoIncrementInitDelay: 300,
+      autoIncrementDelay: 50,
+      autoIncrementIntervalId: -1,
+      autoIncrementSpeed: this.incrementSpeed,
+      autoIncrementMaxSpeed: this.incrementMaxSpeed,
+      autoIncrementAcceleration: this.incrementAcceleration
+    };
+  },
+
+  methods: {
+    textToFloat(text) {
+      const value = parseFloat(text.replace(/[^\d.-]/g, ''));
+
+      if (isFinite(value)) {
+        return value;
+      }
+
+      return 0;
+    },
+
+    textToInt(text) {
+      const value = parseInt(text.replace(/[^\d-]/g, ''));
+
+      if (isFinite(value)) {
+        return value;
+      }
+
+      return 0;
+    },
+
+    textToNumber(text) {
+      text = '' + text;
+
+      if (this.format === 'float') {
+        return this.textToFloat(text);
+      } else {
+        return this.textToInt(text);
+      }
+    },
+
+    submitEvent() {
+      this.number = this.enforceLimits(this.textToNumber(this.text));
+      this.$emit('changed', this.number);
+    },
+
+    onStepClicked(factor) {
+      if (this.disabled) {
+        return;
+      }
+
+      let value = this.textToNumber(this.text);
+      value = value + factor;
+      this.number = this.enforceLimits(value);
+      this.$emit('changed', this.number);
+      this.text = '' + this.number;
+    },
+
+    enforceLimits(value) {
+      if (this.min !== null) {
+        if (value < this.min) {
+          return this.min;
+        }
+      }
+
+      if (this.max !== null) {
+        if (value > this.max) {
+          return this.max;
+        }
+      }
+
+      return value;
+    },
+
+    onMouseDownIncrement(event) {
+      this.onMouseDown(event, 1);
+    },
+
+    onMouseDownDecrement(event) {
+      this.onMouseDown(event, -1);
+    },
+
+    onMouseDown(event, direction) {
+      this.autoIncrementDirection = direction;
+
+      if (this.autoIncrementDelayTimeoutId) {
+        clearTimeout(this.autoIncrementDelayTimeoutId);
+      }
+
+      this.autoIncrementDelayTimeoutId = setTimeout(() => {
+        this.initAutoIncrement();
+      }, this.autoIncrementInitDelay);
+      document.body.addEventListener('mouseup', this.onMouseUp);
+    },
+
+    onMouseUp() {
+      document.body.removeEventListener('mouseup', this.onMouseUp);
+
+      if (this.autoIncrementIntervalId) {
+        clearInterval(this.autoIncrementIntervalId);
+        this.autoIncrementIntervalId = -1;
+      }
+
+      if (this.autoIncrementDelayTimeoutId) {
+        clearTimeout(this.autoIncrementDelayTimeoutId);
+        this.autoIncrementDelayTimeoutId = -1;
+      }
+    },
+
+    initAutoIncrement() {
+      this.autoIncrementSpeed = this.incrementSpeed;
+      this.number = this.textToNumber(this.text);
+      this.autoIncrementIntervalId = setInterval(() => {
+        this.number = this.enforceLimits(this.number + this.autoIncrementDirection * Math.floor(this.autoIncrementSpeed));
+        this.text = '' + this.number;
+        this.$emit('changed', this.number);
+
+        if (this.autoIncrementSpeed < this.autoIncrementMaxSpeed) {
+          this.autoIncrementSpeed += this.autoIncrementAcceleration;
+        }
+      }, this.autoIncrementDelay);
+    }
+
+  },
+  watch: {
+    value(newValue) {
+      this.text = numberToText(newValue);
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/NumberTextfield.vue?vue&type=script&lang=js&
+ /* harmony default export */ const components_NumberTextfieldvue_type_script_lang_js_ = (NumberTextfieldvue_type_script_lang_js_); 
+// EXTERNAL MODULE: ./node_modules/vue-loader/lib/runtime/componentNormalizer.js
+var componentNormalizer = __webpack_require__(1900);
+;// CONCATENATED MODULE: ./src/ui/components/NumberTextfield.vue
+
+
+
+
+
+/* normalize component */
+;
+var component = (0,componentNormalizer/* default */.Z)(
+  components_NumberTextfieldvue_type_script_lang_js_,
+  NumberTextfieldvue_type_template_id_05a675dd_render,
+  NumberTextfieldvue_type_template_id_05a675dd_staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var api; }
+component.options.__file = "src/ui/components/NumberTextfield.vue"
+/* harmony default export */ const NumberTextfield = (component.exports);
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/ColorPicker.vue?vue&type=template&id=2d3ed0c6&lang=html&
+var ColorPickervue_type_template_id_2d3ed0c6_lang_html_render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    {
+      staticClass: "color-picker",
+      class: ["color-picker-uid-" + _vm.uid],
+      style: { width: _vm.width, height: _vm.height },
+      attrs: { title: _vm.hint },
+    },
+    [
+      _c(
+        "div",
+        {
+          ref: "toggleButton",
+          staticClass: "color-picker-toggle-button",
+          class: { disabled: _vm.disabled },
+        },
+        [
+          _c("span", { staticClass: "color-picker-toggle-button-background" }),
+          _vm._v(" "),
+          _c("span", {
+            staticClass: "color-picker-toggle-button-fill",
+            style: _vm.cssStyle,
+            on: {
+              click: function ($event) {
+                return _vm.toggleColorPicker()
+              },
+            },
+          }),
+        ]
+      ),
+      _vm._v(" "),
+      _vm.tooltip.shown
+        ? _c(
+            "div",
+            {
+              ref: "tooltip",
+              staticClass: "color-picker-tooltip",
+              style: { left: _vm.tooltip.x + "px", top: _vm.tooltip.y + "px" },
+            },
+            [
+              _c("color-picker", {
+                on: { input: _vm.updateColor },
+                model: {
+                  value: _vm.vuePickerColor,
+                  callback: function ($$v) {
+                    _vm.vuePickerColor = $$v
+                  },
+                  expression: "vuePickerColor",
+                },
+              }),
+            ],
+            1
+          )
+        : _vm._e(),
+    ]
+  )
+}
+var ColorPickervue_type_template_id_2d3ed0c6_lang_html_staticRenderFns = []
+ColorPickervue_type_template_id_2d3ed0c6_lang_html_render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/editor/ColorPicker.vue?vue&type=template&id=2d3ed0c6&lang=html&
+
+// EXTERNAL MODULE: ./node_modules/shortid/index.js
+var shortid = __webpack_require__(4670);
+var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
+// EXTERNAL MODULE: ./node_modules/vue-color/dist/vue-color.min.js
+var vue_color_min = __webpack_require__(4023);
+var vue_color_min_default = /*#__PURE__*/__webpack_require__.n(vue_color_min);
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/ColorPicker.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+/* harmony default export */ const ColorPickervue_type_script_lang_js_ = ({
+  props: {
+    color: {
+      type: String,
+      default: 'rgba(0,0,0,1.0)'
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '26px'
+    },
+    hollow: {
+      type: Boolean,
+      default: false
+    },
+    disabled: {
+      type: Boolean,
+      default: false
+    },
+    hint: {
+      type: String,
+      default: ''
+    }
+  },
+  components: {
+    'color-picker': (vue_color_min_default()).Chrome
+  },
+
+  beforeMount() {
+    document.body.addEventListener('click', this.onGlobalClick);
+  },
+
+  beforeDestroy() {
+    document.body.removeEventListener('click', this.onGlobalClick);
+  },
+
+  data() {
+    return {
+      uid: shortid_default().generate(),
+      pickerColor: this.color,
+      vuePickerColor: {
+        hex: this.color
+      },
+      showColorPicker: false,
+      tooltip: {
+        shown: false,
+        x: 0,
+        y: 0
+      },
+      oldColor: null,
+      oldAlpha: 1
+    };
+  },
+
+  methods: {
+    toggleColorPicker() {
+      if (this.disabled) {
+        return;
+      }
+
+      if (this.tooltip.shown) {
+        this.tooltip.shown = false;
+        return;
+      }
+
+      this.oldColor = this.color;
+      this.vuePickerColor = {
+        hex: this.color
+      };
+      this.tooltip.shown = true;
+      this.$nextTick(() => {
+        this.readjustTooltipPosition();
+      });
+    },
+
+    updateColor(color) {
+      this.pickerColor = color.hex;
+      this.$emit('input', `rgba(${color.rgba.r}, ${color.rgba.g}, ${color.rgba.b}, ${color.rgba.a})`);
+    },
+
+    readjustTooltipPosition() {
+      const domTooltip = this.$refs.tooltip;
+      const domButton = this.$refs.toggleButton;
+
+      if (!domTooltip || !domButton) {
+        return;
+      }
+
+      const tooltipRect = domTooltip.getBoundingClientRect();
+      const buttonRect = domButton.getBoundingClientRect();
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      let x = 0;
+      let y = 0;
+
+      if (buttonRect.left < windowWidth / 2) {
+        x = buttonRect.right;
+      } else {
+        x = buttonRect.left - tooltipRect.width;
+      }
+
+      if (buttonRect.top < windowHeight / 2) {
+        y = buttonRect.top;
+      } else {
+        y = buttonRect.bottom - tooltipRect.height;
+      }
+
+      if (x + tooltipRect.width > window.innerWidth) {
+        x -= x + tooltipRect.width - window.innerWidth;
+      }
+
+      x = Math.max(0, x);
+
+      if (y + tooltipRect.height > window.innerHeight) {
+        y -= y + tooltipRect.height - window.innerHeight;
+      }
+
+      y = Math.max(60, y);
+      this.tooltip.x = x;
+      this.tooltip.y = y;
+    },
+
+    onGlobalClick(event) {
+      if (!event.target || !event.target.closest(`.color-picker-uid-${this.uid}`)) {
+        this.tooltip.shown = false;
+      }
+    }
+
+  },
+  watch: {
+    color(newColor) {
+      this.pickerColor = newColor;
+      this.vuePickerColor.hex = newColor;
+      this.$forceUpdate();
+    }
+
+  },
+  computed: {
+    cssStyle() {
+      if (this.hollow) {
+        return {
+          background: 'none',
+          border: `2px solid ${this.pickerColor}`
+        };
+      }
+
+      return {
+        background: this.pickerColor,
+        border: `2px solid ${this.pickerColor}`
+      };
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/editor/ColorPicker.vue?vue&type=script&lang=js&
+ /* harmony default export */ const editor_ColorPickervue_type_script_lang_js_ = (ColorPickervue_type_script_lang_js_); 
+;// CONCATENATED MODULE: ./src/ui/components/editor/ColorPicker.vue
+
+
+
+
+
+/* normalize component */
+;
+var ColorPicker_component = (0,componentNormalizer/* default */.Z)(
+  editor_ColorPickervue_type_script_lang_js_,
+  ColorPickervue_type_template_id_2d3ed0c6_lang_html_render,
+  ColorPickervue_type_template_id_2d3ed0c6_lang_html_staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var ColorPicker_api; }
+ColorPicker_component.options.__file = "src/ui/components/editor/ColorPicker.vue"
+/* harmony default export */ const ColorPicker = (ColorPicker_component.exports);
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/AdvancedColorEditor.vue?vue&type=template&id=d89c06ba&
+var AdvancedColorEditorvue_type_template_id_d89c06ba_render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    {
+      staticClass: "advanced-color-editor",
+      class: { disabled: _vm.disabled },
+      style: { width: _vm.width, height: _vm.height },
+    },
+    [
+      !_vm.color.type || _vm.color.type === "none"
+        ? _c("span", {
+            staticClass: "none-picker-toggle-button",
+            on: {
+              click: function ($event) {
+                return _vm.showModal()
+              },
+            },
+          })
+        : _vm._e(),
+      _vm._v(" "),
+      _vm.color.type === "solid"
+        ? _c("span", {
+            staticClass: "color-picker-toggle-button",
+            style: { background: _vm.color.color },
+            on: {
+              click: function ($event) {
+                return _vm.showModal()
+              },
+            },
+          })
+        : _vm._e(),
+      _vm._v(" "),
+      _vm.color.type === "image"
+        ? _c(
+            "div",
+            {
+              staticClass: "image-container",
+              on: {
+                click: function ($event) {
+                  return _vm.showModal()
+                },
+              },
+            },
+            [_c("img", { attrs: { src: _vm.color.image } })]
+          )
+        : _vm._e(),
+      _vm._v(" "),
+      _vm.color.type === "gradient"
+        ? _c("div", {
+            staticClass: "gradient-container",
+            style: { background: _vm.gradientPreview },
+            on: {
+              click: function ($event) {
+                return _vm.showModal()
+              },
+            },
+          })
+        : _vm._e(),
+      _vm._v(" "),
+      _vm.modal.shown
+        ? _c(
+            "modal",
+            {
+              attrs: { title: "Color", width: 400, "use-mask": false },
+              on: {
+                close: function ($event) {
+                  _vm.modal.shown = false
+                },
+              },
+            },
+            [
+              _c(
+                "ul",
+                { staticClass: "tabs" },
+                _vm._l(_vm.colorTypes, function (colorType) {
+                  return _c("li", [
+                    _c(
+                      "span",
+                      {
+                        staticClass: "tab",
+                        class: { active: _vm.color.type === colorType },
+                        on: {
+                          click: function ($event) {
+                            return _vm.selectColorType(colorType)
+                          },
+                        },
+                      },
+                      [
+                        _vm._v(
+                          "\n                    " +
+                            _vm._s(colorType) +
+                            "\n                "
+                        ),
+                      ]
+                    ),
+                  ])
+                }),
+                0
+              ),
+              _vm._v(" "),
+              _c(
+                "div",
+                {
+                  staticClass: "tabs-body",
+                  staticStyle: { "min-height": "320px" },
+                },
+                [
+                  _vm.color.type === "none"
+                    ? _c("div", [
+                        _c("p", [
+                          _vm._v(
+                            "\n                    This setting disables the fill\n                "
+                          ),
+                        ]),
+                      ])
+                    : _vm._e(),
+                  _vm._v(" "),
+                  _vm.color.type === "solid"
+                    ? _c(
+                        "div",
+                        [
+                          _c("color-picker", {
+                            attrs: { palette: [], pressets: [] },
+                            on: { input: _vm.updateSolidColor },
+                            model: {
+                              value: _vm.modal.pickerColor,
+                              callback: function ($$v) {
+                                _vm.$set(_vm.modal, "pickerColor", $$v)
+                              },
+                              expression: "modal.pickerColor",
+                            },
+                          }),
+                        ],
+                        1
+                      )
+                    : _vm._e(),
+                  _vm._v(" "),
+                  _vm.color.type === "image"
+                    ? _c("div", [
+                        _c("div", { staticClass: "image-control" }, [
+                          _c("input", {
+                            staticClass: "textfield",
+                            attrs: { placeholder: "Image URL..." },
+                            domProps: { value: _vm.modal.image.path },
+                            on: {
+                              keydown: function ($event) {
+                                if (
+                                  !$event.type.indexOf("key") &&
+                                  _vm._k(
+                                    $event.keyCode,
+                                    "enter",
+                                    13,
+                                    $event.key,
+                                    "Enter"
+                                  )
+                                ) {
+                                  return null
+                                }
+                                return _vm.onImagePathChange.apply(
+                                  null,
+                                  arguments
+                                )
+                              },
+                              blur: _vm.onImagePathChange,
+                            },
+                          }),
+                          _vm._v(" "),
+                          _vm.isUploadEnabled
+                            ? _c("div", { staticClass: "file-upload-button" }, [
+                                _c("i", {
+                                  staticClass: "fas fa-file-upload icon",
+                                }),
+                                _vm._v(" "),
+                                _c("input", {
+                                  attrs: { type: "file", accept: "image/*" },
+                                  on: { change: _vm.onImageUpload },
+                                }),
+                              ])
+                            : _vm._e(),
+                        ]),
+                        _vm._v(" "),
+                        _c("div", { staticClass: "ctrl-group" }, [
+                          _c("input", {
+                            attrs: {
+                              type: "checkbox",
+                              id: "image-stretch-" + _vm.id,
+                            },
+                            domProps: { checked: _vm.color.stretch },
+                            on: { input: _vm.onImageStretchChange },
+                          }),
+                          _c(
+                            "label",
+                            { attrs: { for: "image-stretch-" + _vm.id } },
+                            [_vm._v(" Stretch")]
+                          ),
+                        ]),
+                        _vm._v(" "),
+                        _vm.isUploading
+                          ? _c("div", { staticClass: "msg msg-info" }, [
+                              _c("i", {
+                                staticClass: "fas fa-spinner fa-spin",
+                              }),
+                              _vm._v(" Uploading...\n                "),
+                            ])
+                          : _vm._e(),
+                        _vm._v(" "),
+                        _vm.uploadErrorMessage
+                          ? _c("div", { staticClass: "msg msg-error" }, [
+                              _vm._v(_vm._s(_vm.uploadErrorMessage)),
+                            ])
+                          : _vm._e(),
+                        _vm._v(" "),
+                        _vm.color.type === "image" && _vm.color.image
+                          ? _c("img", {
+                              staticStyle: {
+                                "max-width": "360px",
+                                "max-height": "360px",
+                              },
+                              attrs: { src: _vm.color.image },
+                            })
+                          : _vm._e(),
+                      ])
+                    : _vm._e(),
+                  _vm._v(" "),
+                  _vm.color.type === "gradient"
+                    ? _c("div", [
+                        _c(
+                          "div",
+                          {
+                            ref: "gradientSliderContainer",
+                            staticClass:
+                              "gradient-slider-container text-nonselectable",
+                          },
+                          [
+                            _c("div", {
+                              staticClass: "gradient-container large",
+                              style: { background: _vm.gradientPreview },
+                              on: { dblclick: _vm.onGradientContainerDblClick },
+                            }),
+                            _vm._v(" "),
+                            _vm._l(
+                              _vm.color.gradient.colors,
+                              function (slider, sliderIdx) {
+                                return _c(
+                                  "div",
+                                  {
+                                    staticClass: "gradient-slider",
+                                    style: { left: slider.p + "%" },
+                                  },
+                                  [
+                                    _c("div", {
+                                      staticClass: "gradient-slider-knob",
+                                      class: {
+                                        selected:
+                                          sliderIdx ===
+                                          _vm.gradient.selectedSliderIdx,
+                                      },
+                                      style: { background: slider.c },
+                                      on: {
+                                        mousedown: function ($event) {
+                                          return _vm.onGradientSliderKnobClick(
+                                            sliderIdx,
+                                            arguments[0]
+                                          )
+                                        },
+                                        dblclick: function ($event) {
+                                          return _vm.onGradientSliderKnobDblClick(
+                                            sliderIdx
+                                          )
+                                        },
+                                      },
+                                    }),
+                                  ]
+                                )
+                              }
+                            ),
+                          ],
+                          2
+                        ),
+                        _vm._v(" "),
+                        _c("div", { staticClass: "gradient-controls" }, [
+                          _c("div", { staticClass: "ctrl-group" }, [
+                            _c("div", { staticClass: "ctrl-label" }, [
+                              _vm._v("Gradient Type"),
+                            ]),
+                            _vm._v(" "),
+                            _c(
+                              "select",
+                              {
+                                directives: [
+                                  {
+                                    name: "model",
+                                    rawName: "v-model",
+                                    value: _vm.color.gradient.type,
+                                    expression: "color.gradient.type",
+                                  },
+                                ],
+                                on: {
+                                  change: [
+                                    function ($event) {
+                                      var $$selectedVal = Array.prototype.filter
+                                        .call(
+                                          $event.target.options,
+                                          function (o) {
+                                            return o.selected
+                                          }
+                                        )
+                                        .map(function (o) {
+                                          var val =
+                                            "_value" in o ? o._value : o.value
+                                          return val
+                                        })
+                                      _vm.$set(
+                                        _vm.color.gradient,
+                                        "type",
+                                        $event.target.multiple
+                                          ? $$selectedVal
+                                          : $$selectedVal[0]
+                                      )
+                                    },
+                                    _vm.emitChange,
+                                  ],
+                                },
+                              },
+                              [
+                                _c("option", { attrs: { value: "linear" } }, [
+                                  _vm._v("Linear"),
+                                ]),
+                                _vm._v(" "),
+                                _c("option", { attrs: { value: "radial" } }, [
+                                  _vm._v("Radial"),
+                                ]),
+                              ]
+                            ),
+                          ]),
+                          _vm._v(" "),
+                          _vm.color.gradient.type === "linear"
+                            ? _c(
+                                "div",
+                                { staticClass: "ctrl-group" },
+                                [
+                                  _c("div", { staticClass: "ctrl-label" }, [
+                                    _vm._v("Direction"),
+                                  ]),
+                                  _vm._v(" "),
+                                  _c("number-textfield", {
+                                    attrs: {
+                                      value: _vm.color.gradient.direction,
+                                    },
+                                    on: {
+                                      changed: function ($event) {
+                                        _vm.color.gradient.direction =
+                                          arguments[0]
+                                        _vm.emitChange()
+                                      },
+                                    },
+                                  }),
+                                ],
+                                1
+                              )
+                            : _vm._e(),
+                          _vm._v(" "),
+                          _c("div", { staticClass: "ctrl-group" }, [
+                            _c(
+                              "span",
+                              {
+                                staticClass: "btn btn-secondary",
+                                on: { click: _vm.invertGradient },
+                              },
+                              [_vm._v("Invert")]
+                            ),
+                          ]),
+                        ]),
+                        _vm._v(" "),
+                        _c(
+                          "div",
+                          { staticClass: "gradient-color-picker" },
+                          [
+                            _c("color-picker", {
+                              key:
+                                "gradient-" +
+                                _vm.id +
+                                "-" +
+                                _vm.gradient.selectedSliderIdx +
+                                "-" +
+                                _vm.revision,
+                              attrs: { value: _vm.gradient.selectedColor },
+                              on: { input: _vm.updateGradientSliderColor },
+                            }),
+                          ],
+                          1
+                        ),
+                      ])
+                    : _vm._e(),
+                ]
+              ),
+            ]
+          )
+        : _vm._e(),
+    ],
+    1
+  )
+}
+var AdvancedColorEditorvue_type_template_id_d89c06ba_staticRenderFns = []
+AdvancedColorEditorvue_type_template_id_d89c06ba_render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/editor/AdvancedColorEditor.vue?vue&type=template&id=d89c06ba&
+
+;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/Modal.vue?vue&type=template&id=60df72a6&
+var Modalvue_type_template_id_60df72a6_render = function () {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c("div", [
+    _vm.useMask ? _c("div", { staticClass: "modal-mask" }) : _vm._e(),
+    _vm._v(" "),
+    _c(
+      "div",
+      {
+        ref: "modalContainer",
+        staticClass: "modal-container text-nonselectable",
+        style: {
+          width: _vm.actualWidth + "px",
+          top: _vm.y + "px",
+          left: _vm.x + "px",
+        },
+      },
+      [
+        _vm.showHeader
+          ? _c(
+              "div",
+              {
+                staticClass: "modal-header",
+                class: { dragging: _vm.dragging },
+                on: {
+                  touchstart: _vm.initModalDrag,
+                  mousedown: _vm.initModalDrag,
+                },
+              },
+              [
+                _c("h3", [_vm._v(_vm._s(_vm.title))]),
+                _vm._v(" "),
+                _vm.closable
+                  ? _c(
+                      "span",
+                      {
+                        staticClass: "modal-close",
+                        on: {
+                          click: function ($event) {
+                            return _vm.$emit("close")
+                          },
+                        },
+                      },
+                      [_c("i", { staticClass: "fas fa-times" })]
+                    )
+                  : _vm._e(),
+              ]
+            )
+          : _vm._e(),
+        _vm._v(" "),
+        _c(
+          "div",
+          { staticClass: "modal-body", style: _vm.modalBodyStyles },
+          [_vm._t("default")],
+          2
+        ),
+        _vm._v(" "),
+        _vm.showFooter
+          ? _c("div", { staticClass: "modal-footer" }, [
+              _c("div", { staticClass: "modal-controls" }, [
+                _vm.primaryButton
+                  ? _c(
+                      "span",
+                      {
+                        staticClass: "btn btn-primary",
+                        class: { disabled: _vm.primaryButtonDisabled },
+                        on: {
+                          click: function ($event) {
+                            return _vm.$emit("primary-submit")
+                          },
+                        },
+                      },
+                      [_vm._v(_vm._s(_vm.primaryButton))]
+                    )
+                  : _vm._e(),
+                _vm._v(" "),
+                _vm.secondaryButton
+                  ? _c(
+                      "span",
+                      {
+                        class: "btn " + _vm.secondaryButtonStyle,
+                        on: {
+                          click: function ($event) {
+                            return _vm.$emit("secondary-submit")
+                          },
+                        },
+                      },
+                      [_vm._v(_vm._s(_vm.secondaryButton))]
+                    )
+                  : _vm.closable
+                  ? _c(
+                      "span",
+                      {
+                        staticClass: "btn btn-secondary",
+                        on: {
+                          click: function ($event) {
+                            return _vm.$emit("close")
+                          },
+                        },
+                      },
+                      [_vm._v(_vm._s(_vm.closeName))]
+                    )
+                  : _vm._e(),
+              ]),
+            ])
+          : _vm._e(),
+      ]
+    ),
+  ])
+}
+var Modalvue_type_template_id_60df72a6_staticRenderFns = []
+Modalvue_type_template_id_60df72a6_render._withStripped = true
+
+
+;// CONCATENATED MODULE: ./src/ui/components/Modal.vue?vue&type=template&id=60df72a6&
+
+;// CONCATENATED MODULE: ./src/ui/dragndrop.js
+function getPageCoordsFromEvent(event) {
+  if (event.changedTouches && event.changedTouches.length > 0) {
+    return {
+      pageX: event.changedTouches[0].pageX,
+      pageY: event.changedTouches[0].pageY
+    };
+  } else if (event.touches && event.touches.length > 0) {
+    return {
+      pageX: event.touches[0].pageX,
+      pageY: event.touches[0].pageY
+    };
+  }
+
+  return {
+    pageX: event.pageX,
+    pageY: event.pageY
+  };
+}
+
+function dragAndDropBuilder(originalEvent) {
+  const originalCoords = getPageCoordsFromEvent(originalEvent);
+  return {
+    originalEvent,
+    originalPageX: originalCoords.pageX,
+    originalPageY: originalCoords.pageY,
+    draggedElement: null,
+    droppableClass: null,
+    scrollableElemet: null,
+    callbacks: {
+      onDrag: () => {},
+      onDragOver: () => {},
+      onDrop: () => {},
+      onDragStart: () => {},
+      onSimpleClick: () => {},
+      onDone: () => {}
+    },
+
+    withScrollableElement(element) {
+      this.scrollableElemet = element;
+      return this;
+    },
+
+    withDraggedElement(draggedElement) {
+      this.draggedElement = draggedElement;
+      return this;
+    },
+
+    withDroppableClass(cssClass) {
+      this.droppableClass = cssClass;
+      return this;
+    },
+
+    onDragStart(callback) {
+      this.callbacks.onDragStart = callback;
+      return this;
+    },
+
+    onDrag(callback) {
+      this.callbacks.onDrag = callback;
+      return this;
+    },
+
+    onDragOver(callback) {
+      this.callbacks.onDragOver = callback;
+      return this;
+    },
+
+    onDrop(callback) {
+      this.callbacks.onDrop = callback;
+      return this;
+    },
+
+    onSimpleClick(callback) {
+      this.callbacks.onSimpleClick = callback;
+      return this;
+    },
+
+    onDone(callback) {
+      this.callbacks.onDone = callback;
+      return this;
+    },
+
+    build() {
+      let pixelsMoved = 0;
+      const pixelMoveThreshold = 5;
+      let startedDragging = false;
+      let mouseMoveEventName = originalEvent.touches ? 'touchmove' : 'mousemove';
+      let mouseUpEventName = originalEvent.touches ? 'touchend' : 'mouseup';
+
+      const reset = event => {
+        document.removeEventListener(mouseMoveEventName, onMouseMove);
+        document.removeEventListener(mouseUpEventName, onMouseUp); // making sure that it was not right click
+
+        if (!startedDragging && originalEvent.button !== 2) {
+          this.callbacks.onSimpleClick(event);
+        }
+
+        startedDragging = false;
+        this.callbacks.onDone();
+      };
+
+      const withDroppableElement = (event, callback) => {
+        if (this.droppableClass) {
+          const droppableElement = event.target.closest(`.${this.droppableClass}`);
+
+          if (droppableElement) {
+            callback(droppableElement);
+          }
+        }
+      };
+
+      const scrollMargin = 20;
+      let scrollIntervalId = null;
+      let lastScrollingStep = 0;
+
+      const startScrolling = scrollStep => {
+        if (!scrollIntervalId || lastScrollingStep !== scrollStep) {
+          stopScrolling();
+          lastScrollingStep = scrollStep;
+          scrollIntervalId = setInterval(() => {
+            this.scrollableElemet.scrollTop += scrollStep;
+          }, 10);
+        }
+      };
+
+      const stopScrolling = () => {
+        if (scrollIntervalId) {
+          clearInterval(scrollIntervalId);
+          scrollIntervalId = null;
+          lastScrollingStep = 0;
+        }
+      };
+
+      const coords = getPageCoordsFromEvent(event);
+      const originalClickX = coords.pageX;
+      const originalClickY = coords.pageY;
+
+      const onMouseMove = event => {
+        if (event.buttons === 0) {
+          reset(event);
+          return;
+        }
+
+        const {
+          pageX,
+          pageY
+        } = getPageCoordsFromEvent(event);
+        pixelsMoved += Math.abs(pageX - this.originalPageX) + Math.abs(pageY - this.originalPageY);
+
+        if (startedDragging) {
+          if (this.draggedElement) {
+            this.draggedElement.style.left = `${pageX + 4}px`;
+            this.draggedElement.style.top = `${pageY + 4}px`;
+          }
+
+          this.callbacks.onDrag(event, pageX, pageY, originalClickX, originalClickY);
+          withDroppableElement(event, element => this.callbacks.onDragOver(event, element, pageX, pageY));
+
+          if (this.scrollableElemet) {
+            const rootBbox = this.scrollableElemet.getBoundingClientRect();
+
+            if (rootBbox.bottom - pageY < scrollMargin) {
+              startScrolling(2);
+            } else if (rootBbox.top - pageY > -scrollMargin) {
+              startScrolling(-2);
+            } else {
+              stopScrolling();
+            }
+          }
+        } else {
+          if (pixelsMoved > pixelMoveThreshold) {
+            startedDragging = true;
+            this.callbacks.onDragStart(event, originalClickX, originalClickY);
+          }
+        }
+      };
+
+      const onMouseUp = event => {
+        const {
+          pageX,
+          pageY
+        } = getPageCoordsFromEvent(event);
+        stopScrolling();
+
+        try {
+          if (startedDragging) {
+            withDroppableElement(event, element => this.callbacks.onDrop(event, element, pageX, pageY));
+          }
+        } catch (err) {
+          console.error(err);
+        }
+
+        reset(event);
+      };
+
+      document.addEventListener(mouseMoveEventName, onMouseMove);
+      document.addEventListener(mouseUpEventName, onMouseUp);
+    }
+
+  };
+}
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/Modal.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+/**
+ * calculates the position on the axis so that it stays visible. Works for both axises: x and y
+ */
+
+function clampModalPosition(axisPos, length, screenLength, minOverlap) {
+  if (axisPos + length < minOverlap) {
+    return minOverlap - length;
+  }
+
+  if (screenLength - axisPos < minOverlap) {
+    return screenLength - minOverlap;
+  }
+
+  return axisPos;
+}
+
+const MIN_OVERLAP = 50;
+const recordedModalPositions = {};
+/* harmony default export */ const Modalvue_type_script_lang_js_ = ({
+  props: {
+    title: {
+      type: String,
+      default: ''
+    },
+    width: {
+      type: Number,
+      default: 600
+    },
+    // used only if stretchWidth is enabled
+    maxWidth: {
+      type: Number,
+      default: 0
+    },
+    maxHeight: {
+      type: Number,
+      default: 0
+    },
+    stretchWidth: {
+      type: Boolean,
+      default: false
+    },
+    primaryButton: {
+      type: String,
+      default: null
+    },
+    primaryButtonDisabled: {
+      type: Boolean,
+      default: false
+    },
+    secondaryButton: {
+      type: String,
+      default: null
+    },
+    secondaryButtonStyle: {
+      type: String,
+      default: 'btn-secondary'
+    },
+    useMask: {
+      type: Boolean,
+      default: true
+    },
+    showHeader: {
+      type: Boolean,
+      default: true
+    },
+    showFooter: {
+      type: Boolean,
+      default: true
+    },
+    closable: {
+      type: Boolean,
+      default: true
+    },
+    closeName: {
+      type: String,
+      default: 'Close'
+    },
+    // this property is used by the parent component
+    // to notify that the modal position should be readjusted on screen
+    // this happens because often the modal's content is dynamically loaded
+    // and when it is mounted it's size maybe different from the one, when the
+    // content is finally loaded
+    repositionId: {
+      type: Number,
+      default: 0
+    }
+  },
+
+  beforeMount() {
+    if (this.stretchWidth) {
+      this.actualWidth = window.innerWidth - 80;
+
+      if (this.maxWidth > 0) {
+        this.actualWidth = Math.min(this.actualWidth, this.maxWidth);
+      }
+    }
+
+    document.addEventListener('keydown', this.onKeyPress);
+  },
+
+  mounted() {
+    const modalRect = this.$refs.modalContainer.getBoundingClientRect();
+    let x = (window.innerWidth - modalRect.width) / 2;
+    let y = (window.innerHeight - modalRect.height) / 2;
+    const recordedPosition = recordedModalPositions[this.title];
+
+    if (recordedPosition) {
+      x = recordedPosition.x;
+      y = recordedPosition.y;
+    }
+
+    this.x = clampModalPosition(x, modalRect.width, window.innerWidth, MIN_OVERLAP);
+    this.y = clampModalPosition(y, 40, window.innerHeight, MIN_OVERLAP);
+  },
+
+  beforeDestroy() {
+    document.removeEventListener('keydown', this.onKeyPress);
+  },
+
+  data() {
+    return {
+      x: 100,
+      y: 100,
+      actualWidth: Math.min(this.width, window.innerWidth - 20),
+      dragging: false
+    };
+  },
+
+  methods: {
+    onKeyPress(event) {
+      if (event.key === 'Escape') {
+        this.$emit('close');
+      }
+    },
+
+    initModalDrag(originalEvent) {
+      let originalModalX = this.x;
+      let originalModalY = this.y;
+      const modalRect = this.$refs.modalContainer.getBoundingClientRect();
+      dragAndDropBuilder(originalEvent).onDragStart(() => {
+        this.dragging = true;
+      }).onDrag((event, x, y, originalX, originalY) => {
+        const dx = x - originalX;
+        const dy = y - originalY;
+        this.x = clampModalPosition(originalModalX + dx, modalRect.width, window.innerWidth, MIN_OVERLAP);
+        this.y = clampModalPosition(originalModalY + dy, 40, window.innerHeight, MIN_OVERLAP);
+        recordedModalPositions[this.title] = {
+          x: this.x,
+          y: this.y
+        };
+      }).onDone(() => {
+        this.dragging = false;
+      }).build();
+    },
+
+    repositionModal() {
+      const modalRect = this.$refs.modalContainer.getBoundingClientRect();
+
+      if (modalRect.right > window.innerWidth) {
+        const newX = modalRect.left - modalRect.right + window.innerWidth;
+        this.x = clampModalPosition(newX, modalRect.width, window.innerWidth, MIN_OVERLAP);
+      }
+
+      if (modalRect.bottom > window.innerHeight) {
+        const newY = modalRect.top - modalRect.bottom + window.innerHeight;
+        this.y = clampModalPosition(newY, 40, window.innerHeight, MIN_OVERLAP);
+      }
+    }
+
+  },
+  computed: {
+    modalBodyStyles() {
+      const styles = {};
+
+      if (this.maxHeight > 0) {
+        styles['max-height'] = `${Math.min(this.maxHeight, window.innerHeight - 120)}px`;
+      } else {
+        styles['max-height'] = `${window.innerHeight - 120}px`;
+      }
+
+      return styles;
+    }
+
+  },
+  watch: {
+    repositionId() {
+      this.$nextTick(() => {
+        this.repositionModal();
+      });
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/Modal.vue?vue&type=script&lang=js&
+ /* harmony default export */ const components_Modalvue_type_script_lang_js_ = (Modalvue_type_script_lang_js_); 
+;// CONCATENATED MODULE: ./src/ui/components/Modal.vue
+
+
+
+
+
+/* normalize component */
+;
+var Modal_component = (0,componentNormalizer/* default */.Z)(
+  components_Modalvue_type_script_lang_js_,
+  Modalvue_type_template_id_60df72a6_render,
+  Modalvue_type_template_id_60df72a6_staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var Modal_api; }
+Modal_component.options.__file = "src/ui/components/Modal.vue"
+/* harmony default export */ const Modal = (Modal_component.exports);
+// EXTERNAL MODULE: ./src/ui/colors.js
+var colors = __webpack_require__(6012);
+// EXTERNAL MODULE: ./src/ui/utils.js
+var utils = __webpack_require__(4691);
+// EXTERNAL MODULE: ./src/ui/store/StoreUtils.js
+var StoreUtils = __webpack_require__(4925);
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/AdvancedColorEditor.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+
+
+
+
+
+
+/**
+ * @returns {String} encoded rgba() color
+ */
+
+function interpolateGradientColor(midColor, leftColor, rightColor) {
+  let d = rightColor.p - leftColor.p;
+
+  if (Math.abs(d) < 0.001) {
+    return leftColor.c;
+  }
+
+  let t = Math.max(0.0, Math.min((midColor.p - leftColor.p) / d, 1.0));
+  const c1 = (0,colors/* parseColor */.l)(leftColor.c);
+  const c2 = (0,colors/* parseColor */.l)(rightColor.c);
+  const r = Math.max(0, Math.min(Math.round(c1.r * (1.0 - t) + c2.r * t), 255));
+  const g = Math.max(0, Math.min(Math.round(c1.g * (1.0 - t) + c2.g * t), 255));
+  const b = Math.max(0, Math.min(Math.round(c1.b * (1.0 - t) + c2.b * t), 255));
+  const a = Math.max(0, Math.min(Math.round(c1.a * (1.0 - t) + c2.a * t), 1.0));
+  return (0,colors/* encodeColor */.N)({
+    r,
+    g,
+    b,
+    a
+  });
+}
+
+/* harmony default export */ const AdvancedColorEditorvue_type_script_lang_js_ = ({
+  props: {
+    value: {
+      type: Object,
+      required: true
+    },
+    width: {
+      type: String,
+      default: '100%'
+    },
+    height: {
+      type: String,
+      default: '26px'
+    },
+    disabled: {
+      type: Boolean,
+      default: false
+    }
+  },
+  components: {
+    'color-picker': (vue_color_min_default()).Chrome,
+    Modal: Modal,
+    NumberTextfield: NumberTextfield
+  },
+
+  beforeMount() {
+    this.updateCurrentColor(this.value);
+  },
+
+  mounted() {
+    document.body.addEventListener('mousemove', this.onMouseMove);
+    document.body.addEventListener('mouseup', this.onMouseUp);
+  },
+
+  beforeDestroy() {
+    document.body.removeEventListener('mousemove', this.onMouseMove);
+    document.body.addEventListener('mouseup', this.onMouseUp);
+  },
+
+  data() {
+    return {
+      id: shortid_default().generate(),
+      // used in a key construction for triggering re-mounting of color picker
+      revision: 0,
+      colorTypes: ['none', 'solid', 'image', 'gradient'],
+      color: utils/* default.clone */.Z.clone(this.value),
+      modal: {
+        shown: false,
+        pickerColor: {
+          hex: this.value.color || '#fff'
+        },
+        image: {
+          path: this.value.image || ''
+        }
+      },
+      gradient: {
+        selectedSliderIdx: 0,
+        isDragging: false,
+        selectedColor: {
+          hex: '#fff'
+        },
+        originalClickPoint: {
+          x: 0
+        },
+        originalKnobPosition: 0
+      },
+      gradientPreview: '',
+      isUploading: false,
+      uploadErrorMessage: null
+    };
+  },
+
+  watch: {
+    value(color) {
+      this.updateCurrentColor(color);
+    }
+
+  },
+  methods: {
+    showModal() {
+      if (this.disabled) {
+        return;
+      }
+
+      this.modal.shown = true;
+    },
+
+    updateCurrentColor(color) {
+      if (color.type === 'gradient') {
+        this.gradient.selectedColor.hex = color.gradient.colors[this.gradient.selectedSliderIdx].c;
+        this.gradientPreview = this.computeGradientPreview(color.gradient);
+      }
+
+      this.color = utils/* default.clone */.Z.clone(color);
+      this.modal.pickerColor = {
+        hex: color.color || '#fff'
+      };
+
+      if (this.color.type === 'image') {
+        this.modal.image.path = this.color.image;
+      }
+
+      this.image = {
+        path: color.image || ''
+      };
+    },
+
+    onImageStretchChange(event) {
+      this.color.stretch = event.target.checked;
+      this.emitChange();
+    },
+
+    emitChange() {
+      this.$emit('changed', utils/* default.clone */.Z.clone(this.color));
+    },
+
+    updateSolidColor(color) {
+      this.color.color = `rgba(${color.rgba.r}, ${color.rgba.g}, ${color.rgba.b}, ${color.rgba.a})`;
+      this.emitChange();
+    },
+
+    selectColorType(colorType) {
+      this.color.type = colorType;
+
+      if (colorType === 'image' && !this.color.image) {
+        this.color.image = '';
+        this.color.stretch = false;
+      }
+
+      if (colorType === 'solid' && !this.color.color) {
+        this.color.color = 'rgba(255,255,255,1.0)';
+      }
+
+      if (colorType === 'gradient' && !this.color.gradient) {
+        let color1 = 'rgba(0,0,0,1.0)';
+        let color2 = 'rgba(255,255,255,1.0)';
+
+        if (this.color.color) {
+          color1 = this.color.color;
+          color2 = this.color.color;
+        }
+
+        this.color.gradient = {
+          colors: [{
+            c: color1,
+            p: 0
+          }, {
+            c: color2,
+            p: 100
+          }],
+          type: 'linear',
+          direction: 0.0
+        };
+        this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+      }
+
+      this.emitChange();
+    },
+
+    onImagePathChange(event) {
+      this.color.image = event.target.value;
+      this.emitChange();
+    },
+
+    onImageUpload(event) {
+      if (!this.$store.state.apiClient || !this.$store.state.apiClient.uploadFile) {
+        return;
+      }
+
+      const file = event.target.files[0];
+
+      if (file) {
+        this.isUploading = true;
+        this.uploadErrorMessage = null;
+        this.$store.state.apiClient.uploadFile(file).then(imageUrl => {
+          this.isUploading = false;
+          this.color.image = imageUrl;
+          this.modal.image.path = imageUrl;
+          this.emitChange();
+        }).catch(err => {
+          this.isUploading = false;
+          this.uploadErrorMessage = 'Failed to upload image';
+
+          if (err.data && err.data.message) {
+            StoreUtils/* default.addErrorSystemMessage */.Z.addErrorSystemMessage(this.$store, err.data.message);
+          }
+        });
+      }
+    },
+
+    onMouseUp(event) {
+      if (this.gradient.isDragging && this.color.type === 'gradient') {
+        this.gradient.isDragging = false;
+        this.color.gradient.colors.sort((a, b) => a.p - b.p);
+      }
+    },
+
+    onMouseMove(event) {
+      if (this.gradient.isDragging) {
+        if (event.buttons === 0) {
+          this.gradient.isDragging = false;
+          return;
+        }
+
+        const x = event.clientX;
+        const containerRect = this.$refs.gradientSliderContainer.getBoundingClientRect();
+        let newPosition = 0;
+
+        if (x < containerRect.left) {
+          newPosition = 0;
+        } else if (x > containerRect.right) {
+          newPosition = 100.0;
+        } else {
+          // calculation position only with 0.01 precision
+          newPosition = Math.round(10000.0 * (x - containerRect.left) / containerRect.width) / 100.0;
+        }
+
+        this.color.gradient.colors[this.gradient.selectedSliderIdx].p = newPosition;
+        this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+        this.$forceUpdate();
+        this.emitChange();
+      }
+    },
+
+    onGradientContainerDblClick(event) {
+      const x = event.clientX;
+      const containerRect = this.$refs.gradientSliderContainer.getBoundingClientRect();
+
+      if (x < containerRect.left || x > containerRect.right) {
+        return;
+      } // calculating position with only 0.01 precision
+
+
+      const position = Math.round(10000 * (x - containerRect.left) / containerRect.width) / 100;
+      this.color.gradient.colors.sort((a, b) => a.p - b.p); // searching for an instert point
+
+      let insertAt = 0;
+      let foundInsertPoint = false;
+
+      for (let i = 0; i < this.color.gradient.colors.length && !foundInsertPoint; i++) {
+        let color = this.color.gradient.colors[i];
+
+        if (position > color.p) {
+          insertAt = i + 1;
+        } else {
+          insertAt = i;
+          foundInsertPoint = true;
+        }
+      }
+
+      this.color.gradient.colors.splice(insertAt, 0, {
+        c: 'rgba(0,0,0,1.0)',
+        p: position
+      });
+
+      if (insertAt === 0 && this.color.gradient.colors.length > 1) {
+        this.color.gradient.colors[0].c = this.color.gradient.colors[1].c;
+      } else if (insertAt === this.color.gradient.colors.length - 1 && this.color.gradient.colors.length > 1) {
+        this.color.gradient.colors[insertAt].c = this.color.gradient.colors[insertAt - 1].c;
+      } else if (this.color.gradient.colors.length > 2) {
+        this.color.gradient.colors[insertAt].c = interpolateGradientColor(this.color.gradient.colors[insertAt], this.color.gradient.colors[insertAt - 1], this.color.gradient.colors[insertAt + 1]);
+      }
+
+      this.gradient.selectedSliderIdx = insertAt;
+      this.gradient.selectedColor.hex = this.color.gradient.colors[insertAt].c; // Updating revision to trigger re-mount of color picker
+
+      this.revision += 1;
+      this.gradient.isDragging = false;
+      this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+      this.emitChange();
+    },
+
+    onGradientSliderKnobClick(sliderIdx, event) {
+      this.gradient.isDragging = true;
+      this.gradient.originalClickPoint.x = event.clientX;
+      this.gradient.selectedColor.hex = this.color.gradient.colors[sliderIdx].c;
+      this.gradient.selectedSliderIdx = sliderIdx;
+      this.gradient.originalKnobPosition = this.color.gradient.colors[sliderIdx].p;
+    },
+
+    onGradientSliderKnobDblClick(sliderIdx) {
+      if (this.color.gradient.colors.length > 2) {
+        this.color.gradient.colors.splice(sliderIdx, 1);
+
+        if (sliderIdx > 0) {
+          sliderIdx -= 1;
+        }
+
+        this.color.gradient.selectedColor = this.color.gradient.colors[sliderIdx].c;
+        this.revision += 1;
+        this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+        this.emitChange();
+      }
+    },
+
+    updateGradientSliderColor(color) {
+      this.color.gradient.colors[this.gradient.selectedSliderIdx].c = `rgba(${color.rgba.r}, ${color.rgba.g}, ${color.rgba.b}, ${color.rgba.a})`;
+      this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+      this.emitChange();
+    },
+
+    invertGradient() {
+      this.color.gradient.colors.reverse();
+
+      for (let i = 0; i < this.color.gradient.colors.length; i++) {
+        this.color.gradient.colors[i].p = myMath/* default.clamp */.Z.clamp(100 - this.color.gradient.colors[i].p, 0, 100);
+      }
+
+      this.gradientPreview = this.computeGradientPreview(this.color.gradient);
+      this.emitChange();
+    },
+
+    computeGradientPreview(gradient) {
+      let result = 'linear-gradient(90deg, ';
+      let colors = gradient.colors;
+      let needsReorder = false;
+
+      for (let i = 0; i < colors.length - 1; i++) {
+        if (colors[i].p > colors[i + 1].p) {
+          needsReorder = true;
+        }
+      }
+
+      if (needsReorder) {
+        colors = gradient.colors.slice();
+        colors.sort((a, b) => a.p - b.p);
+      }
+
+      for (let i = 0; i < colors.length; i++) {
+        if (i > 0) {
+          result += ', ';
+        }
+
+        result += `${colors[i].c} ${colors[i].p}%`;
+      }
+
+      result = result + ')';
+      return result;
+    }
+
+  },
+  computed: {
+    isUploadEnabled() {
+      return this.$store.state.apiClient && this.$store.state.apiClient.uploadFile;
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/editor/AdvancedColorEditor.vue?vue&type=script&lang=js&
+ /* harmony default export */ const editor_AdvancedColorEditorvue_type_script_lang_js_ = (AdvancedColorEditorvue_type_script_lang_js_); 
+;// CONCATENATED MODULE: ./src/ui/components/editor/AdvancedColorEditor.vue
+
+
+
+
+
+/* normalize component */
+;
+var AdvancedColorEditor_component = (0,componentNormalizer/* default */.Z)(
+  editor_AdvancedColorEditorvue_type_script_lang_js_,
+  AdvancedColorEditorvue_type_template_id_d89c06ba_render,
+  AdvancedColorEditorvue_type_template_id_d89c06ba_staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var AdvancedColorEditor_api; }
+AdvancedColorEditor_component.options.__file = "src/ui/components/editor/AdvancedColorEditor.vue"
+/* harmony default export */ const AdvancedColorEditor = (AdvancedColorEditor_component.exports);
+// EXTERNAL MODULE: ./node_modules/lodash/forEach.js
+var forEach = __webpack_require__(4486);
+var forEach_default = /*#__PURE__*/__webpack_require__.n(forEach);
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/TablePropertiesEditor.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+
+
+const tableStyles = [{
+  name: 'Standard',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: false,
+    header: 'none',
+    cutCorner: false
+  }
+}, {
+  name: 'Flat',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: false,
+    header: 'none',
+    cutCorner: false
+  }
+}, {
+  name: 'Standard with header',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: false,
+    header: 'columns',
+    cutCorner: false
+  }
+}, {
+  name: 'Flat with header',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: false,
+    header: 'columns',
+    cutCorner: false
+  }
+}, {
+  name: 'Standard with vertical header',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: false,
+    header: 'rows',
+    cutCorner: false
+  }
+}, {
+  name: 'Flat with vertical header',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: false,
+    header: 'rows',
+    cutCorner: false
+  }
+}, {
+  name: 'Standard with header, odd/even',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: true,
+    header: 'columns',
+    cutCorner: false
+  }
+}, {
+  name: 'Flat with header, odd/even rows',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: true,
+    header: 'columns',
+    cutCorner: false
+  }
+}, {
+  name: 'Standard with both headers',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: false,
+    header: 'both',
+    cutCorner: false
+  }
+}, {
+  name: 'Flat with both headers',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: false,
+    header: 'both',
+    cutCorner: false
+  }
+}, {
+  name: 'Standard with both headers, no corner',
+  shapeProps: {
+    style: 'simple',
+    oddEvenFill: false,
+    header: 'both',
+    cutCorner: true
+  }
+}, {
+  name: 'Flat with both headers, no corner',
+  shapeProps: {
+    style: 'flat',
+    oddEvenFill: false,
+    header: 'both',
+    cutCorner: true
+  }
+}];
+const basicColor = '#ffffff';
+const headerColor = '#bbbbbb';
+const secondaryColor = '#e3e3f3';
+tableStyles.forEach(style => {
+  style.cells = [];
+  const h = 12;
+  const w = 20;
+  const pad = style.shapeProps.style === 'simple' ? 0 : 1;
+  const rows = 4;
+  const cols = 3;
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cell = {
+        color: basicColor,
+        margin: style.shapeProps.style === 'simple' ? 0 : 2,
+        hasBorder: style.shapeProps.style === 'simple',
+        x: col * w + pad,
+        w: w - 2 * pad,
+        y: row * h + pad,
+        h: h - 2 * pad
+      };
+
+      if (style.shapeProps.oddEvenFill && row > 0) {
+        if (row % 2 == 0) {
+          cell.color = secondaryColor;
+        }
+      }
+
+      if (style.shapeProps.header === 'columns' && row === 0 || style.shapeProps.header === 'rows' && col === 0 || style.shapeProps.header === 'both' && (row === 0 || col === 0)) {
+        cell.color = headerColor;
+      }
+
+      if (!(style.shapeProps.cutCorner && row === 0 && col === 0)) {
+        style.cells.push(cell);
+      }
+    }
+  }
+
+  style.gridLines = [];
+
+  if (style.shapeProps.style === 'simple') {
+    for (let row = 0; row <= rows; row++) {
+      style.gridLines.push({
+        x1: style.shapeProps.cutCorner && row === 0 ? w : 0,
+        x2: w * cols,
+        y1: row * h,
+        y2: row * h
+      });
+    }
+
+    for (let col = 0; col <= cols; col++) {
+      style.gridLines.push({
+        x1: col * w,
+        x2: col * w,
+        y1: style.shapeProps.cutCorner && col === 0 ? h : 0,
+        y2: h * rows
+      });
+    }
+  }
+
+  style.iconWidth = cols * w + 6;
+  style.iconHeight = rows * h + 6;
+});
+/* harmony default export */ const TablePropertiesEditorvue_type_script_lang_js_ = ({
+  props: ['item', 'refreshKey'],
+  components: {
+    NumberTextfield: NumberTextfield,
+    ColorPicker: ColorPicker,
+    AdvancedColorEditor: AdvancedColorEditor
+  },
+
+  data() {
+    return {
+      tableStyles
+    };
+  },
+
+  methods: {
+    applyTableStyle(tableStyle) {
+      forEach_default()(tableStyle.shapeProps, (value, name) => {
+        this.item.shapeProps[name] = value;
+      });
+      this.$emit('item-mutated');
+    }
+
+  },
+  watch: {
+    refreshKey() {
+      this.$forceUpdate();
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/TablePropertiesEditor.vue?vue&type=script&lang=js&
+ /* harmony default export */ const shapes_TablePropertiesEditorvue_type_script_lang_js_ = (TablePropertiesEditorvue_type_script_lang_js_); 
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/TablePropertiesEditor.vue
+
+
+
+
+
+/* normalize component */
+;
+var TablePropertiesEditor_component = (0,componentNormalizer/* default */.Z)(
+  shapes_TablePropertiesEditorvue_type_script_lang_js_,
+  TablePropertiesEditorvue_type_template_id_42bcd84a_render,
+  TablePropertiesEditorvue_type_template_id_42bcd84a_staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var TablePropertiesEditor_api; }
+TablePropertiesEditor_component.options.__file = "src/ui/components/editor/items/shapes/TablePropertiesEditor.vue"
+/* harmony default export */ const TablePropertiesEditor = (TablePropertiesEditor_component.exports);
+// EXTERNAL MODULE: ./src/ui/scheme/Item.js
+var Item = __webpack_require__(7196);
+;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/shapes/Table.vue?vue&type=script&lang=js&
+function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); if (enumerableOnly) { symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; }); } keys.push.apply(keys, symbols); } return keys; }
+
+function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; if (i % 2) { ownKeys(Object(source), true).forEach(function (key) { _defineProperty(target, key, source[key]); }); } else if (Object.getOwnPropertyDescriptors) { Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)); } else { ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } } return target; }
+
+function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+
+
+
+
+const minCells = 1;
+const maxCells = 100;
+
+function addColumn(editorId, item) {
+  if (item.shapeProps.columns >= maxCells) {
+    return;
+  }
+
+  changeColumn(editorId, item, item.shapeProps.columns + 1);
+}
+
+function removeColumn(editorId, item) {
+  if (item.shapeProps.columns <= minCells) {
+    return;
+  }
+
+  changeColumn(editorId, item, item.shapeProps.columns - 1);
+}
+
+function changeColumn(editorId, item, newValue) {
+  const oldValue = item.shapeProps.columns;
+  item.shapeProps.columns = newValue;
+  onColumnNumberUpdate(null, item, newValue, oldValue);
+  EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id, `shapeProps.column`);
+  EditorEventBus/* default.schemeChangeCommitted.$emit */.Z.schemeChangeCommitted.$emit(editorId, `item.${item.id}.shapeProps.columns`);
+}
+
+function addRow(editorId, item) {
+  if (item.shapeProps.rows >= maxCells) {
+    return;
+  }
+
+  changeRow(editorId, item, item.shapeProps.rows + 1);
+}
+
+function removeRow(editorId, item) {
+  if (item.shapeProps.rows <= minCells) {
+    return;
+  }
+
+  changeRow(editorId, item, item.shapeProps.rows - 1);
+}
+
+function changeRow(editorId, item, newValue) {
+  const oldValue = item.shapeProps.rows;
+  item.shapeProps.rows = newValue;
+  onRowsNumberUpdate(null, item, newValue, oldValue);
+  EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(editorId, item.id, `shapeProps.rows`);
+  EditorEventBus/* default.schemeChangeCommitted.$emit */.Z.schemeChangeCommitted.$emit(editorId, `item.${item.id}.shapeProps.rows`);
+}
+
+function onColumnNumberUpdate($store, item, columns, previousColumns) {
+  const columnWidths = [];
+  let lastColumnWidth = 100;
+  let total = 0;
+
+  for (let i = 0; i < previousColumns - 1; i++) {
+    const width = item.area.w * item.shapeProps.colWidths[i] / 100;
+    total += width;
+    columnWidths[i] = width;
+  }
+
+  lastColumnWidth = Math.max(item.area.w / (2 * Math.max(1, previousColumns)), item.area.w - total);
+
+  if (columns > previousColumns && columns > 0 && !myMath/* default.tooSmall */.Z.tooSmall(item.area.w)) {
+    for (let i = previousColumns - 1; i < columns - 1; i++) {
+      columnWidths.push(lastColumnWidth);
+      item.area.w += lastColumnWidth;
+    }
+
+    for (let i = previousColumns - 1; i < columns; i++) {
+      for (let j = 0; j < item.shapeProps.rows; j++) {
+        const key = `c_${j}_${i}`;
+
+        if (!item.textSlots.hasOwnProperty(key)) {
+          if (i > 0) {
+            item.textSlots[key] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${j}_${i - 1}`])), {}, {
+              text: ''
+            });
+          } else {
+            item.textSlots[key] = utils/* default.clone */.Z.clone(Item/* defaultTextSlotProps */.td);
+          }
+        }
+      }
+    }
+  }
+
+  if (columns < previousColumns && columns > 0 && !myMath/* default.tooSmall */.Z.tooSmall(item.area.w)) {
+    let newWidth = 0;
+
+    for (let i = 0; i < columns; i++) {
+      newWidth += item.shapeProps.colWidths[i] * item.area.w / 100;
+    }
+
+    item.area.w = newWidth;
+  }
+
+  if (item.shapeProps.colWidths.length > columns) {
+    item.shapeProps.colWidths = item.shapeProps.colWidths.slice(0, columns); //TODO delete old text slots
+  }
+
+  let W = item.area.w;
+
+  if (myMath/* default.tooSmall */.Z.tooSmall(W)) {
+    W = 1;
+  }
+
+  for (let i = 0; i < columns && i < columnWidths.length; i++) {
+    item.shapeProps.colWidths[i] = 100 * columnWidths[i] / W;
+  }
+}
+
+function onRowsNumberUpdate($store, item, rows, previousRows) {
+  const rowWidths = [];
+  let total = 0;
+  let lastRowWidth = 100;
+
+  for (let i = 0; i < previousRows - 1; i++) {
+    const width = item.area.h * item.shapeProps.rowWidths[i] / 100;
+    total += width;
+    rowWidths[i] = width;
+  }
+
+  lastRowWidth = Math.max(item.area.h / (2 * Math.max(1, previousRows)), item.area.h - total);
+
+  if (rows > previousRows && rows > 0 && !myMath/* default.tooSmall */.Z.tooSmall(item.area.h)) {
+    for (let i = previousRows - 1; i < rows - 1; i++) {
+      rowWidths.push(lastRowWidth);
+      item.area.h += lastRowWidth;
+    }
+
+    for (let i = previousRows - 1; i < rows; i++) {
+      for (let j = 0; j < item.shapeProps.columns; j++) {
+        const key = `c_${i}_${j}`;
+
+        if (!item.textSlots.hasOwnProperty(key)) {
+          if (i > 0) {
+            item.textSlots[key] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${i - 1}_${j}`])), {}, {
+              text: ''
+            });
+          } else {
+            item.textSlots[key] = utils/* default.clone */.Z.clone(Item/* defaultTextSlotProps */.td);
+          }
+        }
+      }
+    }
+  }
+
+  if (rows < previousRows && rows > 0 && !myMath/* default.tooSmall */.Z.tooSmall(item.area.h)) {
+    let newWidth = 0;
+
+    for (let i = 0; i < rows; i++) {
+      newWidth += item.shapeProps.rowWidths[i] * item.area.h / 100;
+    }
+
+    item.area.h = newWidth;
+  }
+
+  if (item.shapeProps.rowWidths.length > rows) {
+    item.shapeProps.rowWidths = item.shapeProps.rowWidths.slice(0, rows); //TODO delete old text slots
+  }
+
+  let H = item.area.h;
+
+  if (myMath/* default.tooSmall */.Z.tooSmall(H)) {
+    H = 1;
+  }
+
+  for (let i = 0; i < rows && i < rowWidths.length; i++) {
+    item.shapeProps.rowWidths[i] = 100 * rowWidths[i] / H;
+  }
+}
+
+function computeOutline(item) {
+  if (item.shapeProps.header === 'both' && item.shapeProps.cutCorner) {
+    const firstColumnWidth = item.area.w * item.shapeProps.colWidths[0] / 100;
+    const firstRowWidth = item.area.h * item.shapeProps.rowWidths[0] / 100;
+    return `M ${firstColumnWidth} 0 L ${item.area.w} 0 L ${item.area.w} ${item.area.h} L 0 ${item.area.h}  L 0 ${firstRowWidth} L ${firstColumnWidth} ${firstRowWidth} Z`;
+  }
+
+  return `M 0 0 L ${item.area.w} 0 L ${item.area.w} ${item.area.h} L 0 ${item.area.h} Z`;
+}
+
+function generateCells(item) {
+  const cells = [];
+  let rowOffset = 0;
+  let remainingRowWidth = item.area.h;
+
+  for (let i = 0; i < item.shapeProps.rows; i++) {
+    const rowWidth = Math.min(remainingRowWidth, i < item.shapeProps.rows - 1 ? item.shapeProps.rowWidths[i] * item.area.h / 100 : remainingRowWidth);
+    let columnOffset = 0;
+    let remainingColumnWidth = item.area.w;
+
+    for (let j = 0; j < item.shapeProps.columns; j++) {
+      const columnWidth = Math.min(remainingColumnWidth, j < item.shapeProps.columns - 1 ? item.shapeProps.colWidths[j] * item.area.w / 100 : remainingColumnWidth);
+      let x1 = columnOffset;
+      let x2 = columnOffset + columnWidth;
+      let y1 = rowOffset;
+      let y2 = rowOffset + rowWidth;
+      let pad = 0;
+
+      if (item.shapeProps.style === 'flat') {
+        pad = item.shapeProps.cellPadding;
+      }
+
+      x1 = Math.min(x1 + pad, x2);
+      y1 = Math.min(y1 + pad, y2);
+
+      if (!(item.shapeProps.header === 'both' && item.shapeProps.cutCorner && i === 0 && j === 0)) {
+        cells.push({
+          row: i,
+          col: j,
+          area: {
+            x: x1,
+            y: y1,
+            w: Math.max(0, x2 - pad - x1),
+            h: Math.max(0, y2 - pad - y1)
+          }
+        });
+      }
+
+      columnOffset += columnWidth;
+      remainingColumnWidth -= columnWidth;
+    }
+
+    rowOffset += rowWidth;
+    remainingRowWidth -= rowWidth;
+  }
+
+  return cells;
+}
+
+function getTextSlots(item) {
+  return generateCells(item).map(cell => {
+    return {
+      name: `c_${cell.row}_${cell.col}`,
+      area: cell.area
+    };
+  });
+}
+
+function identifyRowAndColumn(item, x, y) {
+  let row = 0,
+      col = 0;
+  let offset = 0;
+
+  for (let i = 0; i < item.shapeProps.columns - 1; i++) {
+    col = i;
+    offset += item.shapeProps.colWidths[i] * item.area.w / 100.0;
+
+    if (x < offset) {
+      break;
+    }
+  }
+
+  if (x > offset) {
+    col += 1;
+  }
+
+  offset = 0;
+
+  for (let i = 0; i < item.shapeProps.rows - 1; i++) {
+    row = i;
+    offset += item.shapeProps.rowWidths[i] * item.area.h / 100.0;
+
+    if (y < offset) {
+      break;
+    }
+  }
+
+  if (y > offset) {
+    row += 1;
+  }
+
+  return {
+    row,
+    col
+  };
+}
+
+function calculateRealColumnWidths(item) {
+  const realColumnWidths = [];
+  let offset = 0;
+
+  for (let i = 0; i < item.shapeProps.columns - 1 && i < item.shapeProps.colWidths.length; i++) {
+    realColumnWidths[i] = item.shapeProps.colWidths[i] * item.area.w / 100;
+    offset += realColumnWidths[i];
+  }
+
+  const leftOverWidth = Math.max(0, item.area.w - offset);
+  realColumnWidths.push(leftOverWidth);
+  return realColumnWidths;
+}
+
+function updateColWidths(item, realColumnWidths) {
+  item.shapeProps.colWidths = [];
+
+  for (let i = 0; i < item.shapeProps.columns - 1; i++) {
+    const width = myMath/* default.tooSmall */.Z.tooSmall(item.area.w) ? 1 : item.area.w;
+    item.shapeProps.colWidths[i] = 100 * realColumnWidths[i] / width;
+  }
+}
+
+function calculateRealRowWidths(item) {
+  const realRowWidths = [];
+  let offset = 0;
+
+  for (let i = 0; i < item.shapeProps.rows - 1 && i < item.shapeProps.rowWidths.length; i++) {
+    realRowWidths[i] = item.shapeProps.rowWidths[i] * item.area.h / 100;
+    offset += realRowWidths[i];
+  }
+
+  const leftOverWidth = Math.max(0, item.area.h - offset);
+  realRowWidths.push(leftOverWidth);
+  return realRowWidths;
+}
+
+function updateRowWidths(item, realRowWidths) {
+  item.shapeProps.rowWidths = [];
+
+  for (let i = 0; i < item.shapeProps.rows - 1; i++) {
+    const width = myMath/* default.tooSmall */.Z.tooSmall(item.area.h) ? 1 : item.area.h;
+    item.shapeProps.rowWidths[i] = 100 * realRowWidths[i] / width;
+  }
+}
+
+function deleteColumn(item, col) {
+  if (item.shapeProps.columns < 2) {
+    return false;
+  }
+
+  const realColumnWidths = calculateRealColumnWidths(item);
+  item.shapeProps.columns -= 1;
+
+  if (col < item.shapeProps.colWidths.length) {
+    const columnWidth = realColumnWidths[col];
+    item.area.w = Math.max(0, item.area.w - columnWidth);
+    item.shapeProps.colWidths.splice(col, 1);
+    realColumnWidths.splice(col, 1);
+  } else if (col === item.shapeProps.colWidths.length) {
+    item.shapeProps.colWidths.length -= 1;
+    item.area.w = Math.max(0, item.area.w - realColumnWidths[realColumnWidths.length - 1]);
+  }
+
+  updateColWidths(item, realColumnWidths);
+
+  for (let i = col; i < item.shapeProps.columns; i++) {
+    for (let j = 0; j < item.shapeProps.rows; j++) {
+      item.textSlots[`c_${j}_${i}`] = item.textSlots[`c_${j}_${i + 1}`];
+    }
+  }
+
+  for (let j = 0; j < item.shapeProps.rows; j++) {
+    delete item.textSlots[`c_${j}_${item.shapeProps.columns}`];
+  }
+
+  return true;
+}
+
+function insertColumn(item, idx) {
+  const realWidths = calculateRealColumnWidths(item);
+  const newColumnWidth = idx < realWidths.length ? realWidths[idx] : realWidths[realWidths.length - 1];
+  realWidths.splice(idx, 0, newColumnWidth);
+  item.area.w += newColumnWidth;
+  item.shapeProps.columns += 1;
+  updateColWidths(item, realWidths);
+
+  for (let i = item.shapeProps.columns - 1; i >= idx; i--) {
+    for (let j = 0; j < item.shapeProps.rows; j++) {
+      item.textSlots[`c_${j}_${i}`] = item.textSlots[`c_${j}_${i - 1}`];
+    }
+  }
+
+  for (let j = 0; j < item.shapeProps.rows; j++) {
+    if (idx < item.shapeProps.columns - 1) {
+      item.textSlots[`c_${j}_${idx}`] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${j}_${idx + 1}`])), {}, {
+        text: ''
+      });
+    } else if (idx > 0) {
+      item.textSlots[`c_${j}_${idx}`] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${j}_${idx - 1}`])), {}, {
+        text: ''
+      });
+    } else {
+      item.textSlots[`c_${j}_${idx}`] = utils/* default.clone */.Z.clone(Item/* defaultTextSlotProps */.td);
+    }
+  }
+
+  return true;
+}
+
+function insertRow(item, idx) {
+  const realWidths = calculateRealRowWidths(item);
+  const newRowWidth = idx < realWidths.length ? realWidths[idx] : realWidths[realWidths.length - 1];
+  realWidths.splice(idx, 0, newRowWidth);
+  item.area.h += newRowWidth;
+  item.shapeProps.rows += 1;
+  updateRowWidths(item, realWidths);
+
+  for (let j = item.shapeProps.rows - 1; j >= idx; j--) {
+    for (let i = 0; i < item.shapeProps.columns; i++) {
+      item.textSlots[`c_${j}_${i}`] = item.textSlots[`c_${j - 1}_${i}`];
+    }
+  }
+
+  for (let i = 0; i < item.shapeProps.columns; i++) {
+    if (idx < item.shapeProps.rows - 1) {
+      item.textSlots[`c_${idx}_${i}`] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${idx + 1}_${i}`])), {}, {
+        text: ''
+      });
+    } else if (idx > 0) {
+      item.textSlots[`c_${idx}_${i}`] = _objectSpread(_objectSpread({}, utils/* default.clone */.Z.clone(item.textSlots[`c_${idx - 1}_${i}`])), {}, {
+        text: ''
+      });
+    } else {
+      item.textSlots[`c_${idx}_${i}`] = utils/* default.clone */.Z.clone(Item/* defaultTextSlotProps */.td);
+    }
+  }
+
+  return true;
+}
+
+function deleteRow(item, row) {
+  if (item.shapeProps.rows < 2) {
+    return false;
+  }
+
+  const realRowWidths = calculateRealRowWidths(item);
+  item.shapeProps.rows -= 1;
+
+  if (row < item.shapeProps.rowWidths.length) {
+    item.area.h = Math.max(0, item.area.h - realRowWidths[row]);
+    item.shapeProps.rowWidths.splice(row, 1);
+    realRowWidths.splice(row, 1);
+  } else if (row === item.shapeProps.rowWidths.length) {
+    item.shapeProps.rowWidths.length -= 1;
+    item.area.h = Math.max(0, item.area.h - realRowWidths[realRowWidths.length - 1]);
+  }
+
+  updateRowWidths(item, realRowWidths);
+
+  for (let i = row; i < item.shapeProps.rows; i++) {
+    for (let j = 0; j < item.shapeProps.columns; j++) {
+      item.textSlots[`c_${i}_${j}`] = item.textSlots[`c_${i + 1}_${j}`];
+    }
+  }
+
+  for (let j = 0; j < item.shapeProps.columns; j++) {
+    delete item.textSlots[`c_${item.shapeProps.rows}_${j}`];
+  }
+
+  return true;
+}
+
+function copyTextStyleToColumn(item, row, col) {
+  const textSlot = utils/* default.clone */.Z.clone(item.textSlots[`c_${row}_${col}`]);
+
+  for (let i = 0; i < item.shapeProps.rows; i++) {
+    if (i != row) {
+      const slotName = `c_${i}_${col}`;
+      const text = item.textSlots[slotName].text;
+      item.textSlots[slotName] = _objectSpread(_objectSpread({}, textSlot), {}, {
+        text
+      });
+    }
+  }
+
+  return true;
+}
+
+function copyTextStyleToRow(item, row, col) {
+  const textSlot = utils/* default.clone */.Z.clone(item.textSlots[`c_${row}_${col}`]);
+
+  for (let i = 0; i < item.shapeProps.columns; i++) {
+    if (i != col) {
+      const slotName = `c_${row}_${i}`;
+      const text = item.textSlots[slotName].text;
+      item.textSlots[slotName] = _objectSpread(_objectSpread({}, textSlot), {}, {
+        text
+      });
+    }
+  }
+
+  return true;
+}
+
+function copyTextStyleToAllCells(item, row, col) {
+  const textSlot = utils/* default.clone */.Z.clone(item.textSlots[`c_${row}_${col}`]);
+
+  for (let j = 0; j < item.shapeProps.rows; j++) {
+    for (let i = 0; i < item.shapeProps.columns; i++) {
+      if (!(i === col && j === row)) {
+        const slotName = `c_${j}_${i}`;
+        const text = item.textSlots[slotName].text;
+        item.textSlots[slotName] = _objectSpread(_objectSpread({}, textSlot), {}, {
+          text
+        });
+      }
+    }
+  }
+
+  return true;
+}
+
+function copyTextStyleToHeaderCells(item, row, col) {
+  const header = item.shapeProps.header;
+  const textSlot = utils/* default.clone */.Z.clone(item.textSlots[`c_${row}_${col}`]);
+
+  for (let j = 0; j < item.shapeProps.rows; j++) {
+    for (let i = 0; i < item.shapeProps.columns; i++) {
+      const isHeaderCell = (header === 'columns' || header === 'both') && j === 0 || (header === 'rows' || header === 'both') && i === 0;
+
+      if (isHeaderCell && !(i === col && j === row)) {
+        const slotName = `c_${j}_${i}`;
+        const text = item.textSlots[slotName].text;
+        item.textSlots[slotName] = _objectSpread(_objectSpread({}, textSlot), {}, {
+          text
+        });
+      }
+    }
+  }
+
+  return true;
+}
+
+function copyTextStyleToRegularCells(item, row, col) {
+  const header = item.shapeProps.header;
+  const textSlot = utils/* default.clone */.Z.clone(item.textSlots[`c_${row}_${col}`]);
+
+  for (let j = 0; j < item.shapeProps.rows; j++) {
+    for (let i = 0; i < item.shapeProps.columns; i++) {
+      const isHeaderCell = (header === 'columns' || header === 'both') && j === 0 || (header === 'rows' || header === 'both') && i === 0;
+
+      if (!isHeaderCell && !(i === col && j === row)) {
+        const slotName = `c_${j}_${i}`;
+        const text = item.textSlots[slotName].text;
+        item.textSlots[slotName] = _objectSpread(_objectSpread({}, textSlot), {}, {
+          text
+        });
+      }
+    }
+  }
+
+  return true;
+}
+
+function menuItem(name, iconFile, shapeProps) {
+  return {
+    group: 'Tables',
+    name: name,
+    iconUrl: `/assets/images/items/${iconFile}`,
+    item: {
+      shapeProps
+    },
+    previewArea: {
+      x: 5,
+      y: 5,
+      w: 200,
+      h: 100
+    },
+    size: {
+      w: 200,
+      h: 100
+    }
+  };
+}
+
+function fixItem(item) {
+  if (item.shapeProps.columns < 1) {
+    item.shapeProps.columns = 1;
+  }
+
+  if (item.shapeProps.rows < 1) {
+    item.shapeProps.rows = 1;
+  }
+
+  if (item.shapeProps.colWidths.length > item.shapeProps.columns - 1) {
+    item.shapeProps.colWidths = item.shapeProps.colWidths.slice(0, item.shapeProps.columns - 1);
+  } else if (item.shapeProps.colWidths.length < item.shapeProps.columns - 1) {
+    const missingColumns = item.shapeProps.columns - 1 - item.shapeProps.colWidths.length;
+    let sumWidth = 0;
+
+    for (let i = 0; i < item.shapeProps.colWidths.length; i++) {
+      sumWidth += item.shapeProps.colWidths[i] * item.area.w / 100;
+    }
+
+    const w = item.area.w;
+
+    if (myMath/* default.tooSmall */.Z.tooSmall(w)) {
+      w = 1;
+    }
+
+    if (missingColumns > 0) {
+      const ratio = Math.max(0, item.area.w - sumWidth) * 100 / (w * (missingColumns + 1));
+
+      for (let i = 0; i < missingColumns; i++) {
+        item.shapeProps.colWidths.push(ratio);
+      }
+    }
+  }
+
+  if (item.shapeProps.rowWidths.length > item.shapeProps.rows - 1) {
+    item.shapeProps.rowWidths = item.shapeProps.rowWidths.slice(0, item.shapeProps.rows - 1);
+  } else if (item.shapeProps.rowWidths.length < item.shapeProps.rows - 1) {
+    const missingRows = item.shapeProps.rows - 1 - item.shapeProps.rowWidths.length;
+    let sumWidth = 0;
+
+    for (let i = 0; i < item.shapeProps.rowWidths.length; i++) {
+      sumWidth += item.shapeProps.rowWidths[i] * item.area.h / 100;
+    }
+
+    const h = item.area.h;
+
+    if (myMath/* default.tooSmall */.Z.tooSmall(h)) {
+      h = 1;
+    }
+
+    if (missingRows > 0) {
+      const ratio = Math.max(0, item.area.h - sumWidth) * 100 / (h * (missingRows + 1));
+
+      for (let i = 0; i < missingRows; i++) {
+        item.shapeProps.rowWidths.push(ratio);
+      }
+    }
+  }
+}
+
+/* harmony default export */ const Tablevue_type_script_lang_js_ = ({
+  props: ['item'],
+  components: {
+    AdvancedFill: AdvancedFill/* default */.Z
+  },
+  shapeConfig: {
+    shapeType: 'vue',
+    id: 'uml_table',
+    menuItems: [menuItem('Table', 'table-simple.svg', {
+      columns: 3,
+      rows: 3,
+      header: 'none'
+    }), menuItem('Table with header', 'table-h-header.svg', {
+      columns: 3,
+      rows: 3,
+      header: 'columns'
+    }), menuItem('Table with vertical header', 'table-v-header.svg', {
+      columns: 3,
+      rows: 3,
+      header: 'rows'
+    }), menuItem('Table with double header', 'table-dbl-header.svg', {
+      columns: 3,
+      rows: 3,
+      header: 'both',
+      cutCorner: false
+    }), menuItem('Table with double header', 'table-dbl-header-2.svg', {
+      columns: 3,
+      rows: 3,
+      header: 'both',
+      cutCorner: true
+    })],
+    computeOutline,
+    getTextSlots,
+    fixItem,
+    controlPoints: {
+      make(item) {
+        const cps = {};
+        let offset = 0;
+
+        for (let i = 0; i < item.shapeProps.columns - 1; i++) {
+          const r = item.shapeProps.colWidths[i];
+          offset += r * item.area.w / 100.0;
+          cps[`c_${i}`] = {
+            x: myMath/* default.clamp */.Z.clamp(offset, 0, item.area.w),
+            y: 0
+          };
+        }
+
+        offset = 0;
+
+        for (let i = 0; i < item.shapeProps.rows - 1; i++) {
+          const r = item.shapeProps.rowWidths[i];
+          offset += r * item.area.h / 100.0;
+          cps[`r_${i}`] = {
+            x: 0,
+            y: myMath/* default.clamp */.Z.clamp(offset, 0, item.area.h)
+          };
+        }
+
+        return cps;
+      },
+
+      handleDrag(item, controlPointName, originalX, originalY, dx, dy) {
+        if (controlPointName.startsWith('c_')) {
+          let movement = originalX + dx;
+          const W = item.area.w;
+          const columns = Math.max(1, item.shapeProps.columns);
+
+          if (myMath/* default.tooSmall */.Z.tooSmall(W)) {
+            return;
+          }
+
+          const columnNumber = parseInt(controlPointName.substr(2));
+          let offset = 0;
+
+          for (let i = 0; i < columnNumber; i++) {
+            const r = item.shapeProps.colWidths[i];
+            offset += r * W / 100.0;
+          }
+
+          const width = Math.max(0, movement - offset);
+          const minWidth = 5 / columns;
+          const maxWidth = 100 - 5 / columns;
+          item.shapeProps.colWidths[columnNumber] = myMath/* default.clamp */.Z.clamp(100 * width / W, minWidth, maxWidth);
+        } else if (controlPointName.startsWith('r_')) {
+          let movement = originalY + dy;
+          const H = item.area.h;
+          const rows = Math.max(1, item.shapeProps.rows);
+
+          if (myMath/* default.tooSmall */.Z.tooSmall(H)) {
+            return;
+          }
+
+          const rowNumber = parseInt(controlPointName.substr(2));
+          let offset = 0;
+
+          for (let i = 0; i < rowNumber; i++) {
+            const r = item.shapeProps.rowWidths[i];
+            offset += r * H / 100.0;
+          }
+
+          const width = Math.max(0, movement - offset);
+          const minWidth = 5 / rows;
+          const maxWidth = 100 - 5 / rows;
+          item.shapeProps.rowWidths[rowNumber] = myMath/* default.clamp */.Z.clamp(100 * width / H, minWidth, maxWidth);
+        }
+      }
+
+    },
+    args: {
+      style: {
+        type: 'choice',
+        value: 'simple',
+        options: ['simple', 'flat'],
+        name: 'Style'
+      },
+      columns: {
+        type: 'number',
+        value: 3,
+        name: 'Columns',
+        min: minCells,
+        max: maxCells,
+        onUpdate: onColumnNumberUpdate
+      },
+      rows: {
+        type: 'number',
+        value: 3,
+        name: 'Rows',
+        min: minCells,
+        max: maxCells,
+        onUpdate: onRowsNumberUpdate
+      },
+      fill: {
+        type: 'advanced-color',
+        value: {
+          type: 'solid',
+          color: 'rgba(245, 245, 245, 1.0)'
+        },
+        name: 'Fill'
+      },
+      stroke: {
+        type: 'color',
+        value: 'rgba(145, 178, 196, 1.0)',
+        name: 'Stroke',
+        depends: {
+          style: 'simple'
+        }
+      },
+      strokeSize: {
+        type: 'number',
+        value: 1,
+        name: 'Stroke size',
+        depends: {
+          style: 'simple'
+        }
+      },
+      cellPadding: {
+        type: 'number',
+        value: 2,
+        name: 'Cell padding',
+        depends: {
+          style: 'flat'
+        }
+      },
+      header: {
+        type: 'choice',
+        value: 'columns',
+        options: ['none', 'columns', 'rows', 'both'],
+        name: 'Header fill override'
+      },
+      headerFill: {
+        type: 'advanced-color',
+        value: {
+          type: 'solid',
+          color: 'rgba(168, 193, 219, 1.0)'
+        },
+        name: 'Header fill'
+      },
+      cutCorner: {
+        type: 'boolean',
+        value: false,
+        name: 'Cut corner',
+        depends: {
+          header: 'both'
+        }
+      },
+      oddEvenFill: {
+        type: 'boolean',
+        value: false,
+        name: 'Odd/even fill'
+      },
+      rowSecondaryFill: {
+        type: 'advanced-color',
+        value: {
+          type: 'solid',
+          color: 'rgba(234, 241, 246, 1.0)'
+        },
+        name: 'Row secondary fill',
+        depends: {
+          oddEvenFill: true
+        }
+      },
+      colWidths: {
+        type: 'custom',
+        value: [33.3, 33.3],
+        hidden: true
+      },
+      rowWidths: {
+        type: 'custom',
+        value: [33.3, 33.3],
+        hidden: true
+      }
+    },
+    editorProps: {
+      textSlotTabsDisabled: true,
+
+      contextMenu(x, y, item) {
+        const {
+          row,
+          col
+        } = identifyRowAndColumn(item, x, y);
+        const rowNum = row + 1;
+        const colNum = col + 1;
+        let subOptions = [{
+          name: `Insert column before #${colNum}`,
+          clicked: () => insertColumn(item, col)
+        }, {
+          name: `Insert column after #${colNum}`,
+          clicked: () => insertColumn(item, col + 1)
+        }, {
+          name: `Insert row before #${rowNum}`,
+          clicked: () => insertRow(item, row)
+        }, {
+          name: `Insert row after #${rowNum}`,
+          clicked: () => insertRow(item, row + 1)
+        }];
+
+        if (item.shapeProps.columns > 1) {
+          subOptions.push({
+            name: `Delete column #${colNum}`,
+            iconClass: 'fas fa-trash',
+            clicked: () => deleteColumn(item, col)
+          });
+        }
+
+        if (item.shapeProps.rows > 1) {
+          subOptions.push({
+            name: `Delete row #${rowNum}`,
+            iconClass: 'fas fa-trash',
+            clicked: () => deleteRow(item, row)
+          });
+        }
+
+        subOptions = subOptions.concat([{
+          name: 'Copy text style to column',
+          clicked: () => copyTextStyleToColumn(item, row, col)
+        }, {
+          name: 'Copy text style to row',
+          clicked: () => copyTextStyleToRow(item, row, col)
+        }, {
+          name: 'Copy text style to all cells',
+          clicked: () => copyTextStyleToAllCells(item, row, col)
+        }]);
+
+        if (item.shapeProps.header !== 'none') {
+          subOptions = subOptions.concat([{
+            name: 'Copy text style to header cells',
+            clicked: () => copyTextStyleToHeaderCells(item, row, col)
+          }, {
+            name: 'Copy text style to regular cells',
+            clicked: () => copyTextStyleToRegularCells(item, row, col)
+          }]);
+        }
+
+        return [{
+          name: 'Table',
+          subOptions
+        }];
+      },
+
+      shapePropsEditor: {
+        component: TablePropertiesEditor
+      },
+      // Is invoked from multi-item-edit-box for rendering addition controls
+      editBoxControls: (editorId, item) => {
+        const controls = [];
+
+        if (item.shapeProps.columns < maxCells) {
+          controls.push({
+            name: 'Add Column',
+            type: 'button',
+            hPlace: 'right',
+            vPlace: 'center',
+            iconClass: 'fa-solid fa-plus',
+            position: {
+              x: 30,
+              y: 0
+            },
+            click: () => {
+              addColumn(editorId, item);
+            }
+          });
+        }
+
+        if (item.shapeProps.columns > minCells) {
+          controls.push({
+            name: 'Remove Column',
+            type: 'button',
+            hPlace: 'right',
+            vPlace: 'top',
+            iconClass: 'fa-solid fa-minus',
+            position: {
+              x: 0,
+              y: 30
+            },
+            click: () => {
+              removeColumn(editorId, item);
+            }
+          });
+        }
+
+        if (item.shapeProps.rows < maxCells) {
+          controls.push({
+            name: 'Add Row',
+            type: 'button',
+            hPlace: 'center',
+            vPlace: 'bottom',
+            iconClass: 'fa-solid fa-plus',
+            position: {
+              x: 0,
+              y: 30
+            },
+            click: () => {
+              addRow(editorId, item);
+            }
+          });
+        }
+
+        if (item.shapeProps.rows > minCells) {
+          controls.push({
+            name: 'Remove Row',
+            type: 'button',
+            hPlace: 'left',
+            vPlace: 'bottom',
+            iconClass: 'fa-solid fa-minus',
+            position: {
+              x: 30,
+              y: 0
+            },
+            click: () => {
+              removeRow(editorId, item);
+            }
+          });
+        }
+
+        return controls;
+      }
+    }
+  },
+
+  data() {
+    return {};
+  },
+
+  computed: {
+    svgFill() {
+      return AdvancedFill/* default.computeSvgFill */.Z.computeSvgFill(this.item.shapeProps.fill, `fill-pattern-${this.item.id}`);
+    },
+
+    outlinePath() {
+      return computeOutline(this.item);
+    },
+
+    gridLines() {
+      const lines = [];
+      let offset = 0;
+      const cutCorner = this.item.shapeProps.header === 'both' && this.item.shapeProps.cutCorner;
+      const firstColumnWidth = this.item.area.w * this.item.shapeProps.colWidths[0] / 100;
+      const firstRowWidth = this.item.area.h * this.item.shapeProps.rowWidths[0] / 100;
+
+      for (let i = 1; i < this.item.shapeProps.rows; i++) {
+        offset += this.item.shapeProps.rowWidths[i - 1] * this.item.area.h / 100;
+        lines.push({
+          x1: i === 1 && cutCorner ? firstColumnWidth : 0,
+          x2: this.item.area.w,
+          y1: offset,
+          y2: offset
+        });
+      } // vertical lines
+
+
+      offset = 0;
+
+      for (let i = 1; i < this.item.shapeProps.columns; i++) {
+        offset += this.item.shapeProps.colWidths[i - 1] * this.item.area.w / 100;
+        lines.push({
+          x1: offset,
+          x2: offset,
+          y1: i === 1 && cutCorner ? firstRowWidth : 0,
+          y2: this.item.area.h
+        });
+      }
+
+      return lines;
+    },
+
+    cells() {
+      const fill = AdvancedFill/* default.computeSvgFill */.Z.computeSvgFill(this.item.shapeProps.fill, `fill-pattern-${this.item.id}`);
+      const headerFill = AdvancedFill/* default.computeSvgFill */.Z.computeSvgFill(this.item.shapeProps.headerFill, `fill-pattern-${this.item.id}-header`);
+      const secondaryFill = AdvancedFill/* default.computeSvgFill */.Z.computeSvgFill(this.item.shapeProps.rowSecondaryFill, `fill-pattern-${this.item.id}-secondary-fill`);
+      return generateCells(this.item).map(cell => {
+        if (cell.row === 0 && (this.item.shapeProps.header === 'columns' || this.item.shapeProps.header === 'both')) {
+          cell.fill = headerFill;
+        } else if (cell.col === 0 && (this.item.shapeProps.header === 'rows' || this.item.shapeProps.header === 'both')) {
+          cell.fill = headerFill;
+        } else if (this.item.shapeProps.oddEvenFill && cell.row % 2 === 1) {
+          cell.fill = secondaryFill;
+        } else {
+          cell.fill = fill;
+        }
+
+        return cell;
+      });
+    }
+
+  }
+});
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/Table.vue?vue&type=script&lang=js&
+ /* harmony default export */ const shapes_Tablevue_type_script_lang_js_ = (Tablevue_type_script_lang_js_); 
+;// CONCATENATED MODULE: ./src/ui/components/editor/items/shapes/Table.vue
+
+
+
+
+
+/* normalize component */
+;
+var Table_component = (0,componentNormalizer/* default */.Z)(
+  shapes_Tablevue_type_script_lang_js_,
+  render,
+  staticRenderFns,
+  false,
+  null,
+  null,
+  null
+  
+)
+
+/* hot reload */
+if (false) { var Table_api; }
+Table_component.options.__file = "src/ui/components/editor/items/shapes/Table.vue"
+/* harmony default export */ const Table = (Table_component.exports);
 
 /***/ }),
 
@@ -49870,7 +54552,7 @@ function normalizeComponent (
 
 /***/ }),
 
-/***/ 2961:
+/***/ 2618:
 /***/ ((module) => {
 
 let urlAlphabet =
@@ -50086,9 +54768,10 @@ var render = function () {
         { staticClass: "ssc-body" },
         [
           _vm.schemeContainer
-            ? _c("svg-editor", {
+            ? _c("SvgEditor", {
                 ref: "svgEditor",
                 attrs: {
+                  editorId: _vm.editorId,
                   "scheme-container": _vm.schemeContainer,
                   "offset-x": _vm.offsetX,
                   "offset-y": _vm.offsetY,
@@ -50096,6 +54779,7 @@ var render = function () {
                   "use-mouse-wheel": _vm.useMouseWheel,
                   mode: "view",
                   userEventBus: _vm.userEventBus,
+                  highlightedItems: _vm.highlightedItems,
                 },
                 on: {
                   "mouse-wheel": _vm.mouseWheel,
@@ -50103,6 +54787,9 @@ var render = function () {
                   "mouse-down": _vm.mouseDown,
                   "mouse-up": _vm.mouseUp,
                   "mouse-double-click": _vm.mouseDoubleClick,
+                  "item-tooltip-requested": _vm.onItemTooltipTriggered,
+                  "item-side-panel-requested": _vm.onItemSidePanelTriggered,
+                  "screen-transform-updated": _vm.onScreenTransformUpdated,
                 },
               })
             : _vm._e(),
@@ -50181,13 +54868,21 @@ var SvgEditorvue_type_template_id_30c57726_lang_html_render = function () {
         "svg",
         {
           ref: "svgDomElement",
+          staticClass: "svg-editor-plot",
           class: _vm.cssClass,
           style: {
             background: _vm.schemeContainer.scheme.style.backgroundColor,
           },
-          attrs: { id: "svg_plot", "data-void": "true" },
+          attrs: {
+            id: "svg-plot-" + _vm.editorId,
+            "data-void": "true",
+            oncontextmenu: "return false;",
+          },
           on: {
             mousemove: _vm.mouseMove,
+            touchstart: _vm.touchStart,
+            touchend: _vm.touchEnd,
+            touchmove: _vm.touchMove,
             mousedown: _vm.mouseDown,
             mouseup: _vm.mouseUp,
             dblclick: _vm.mouseDoubleClick,
@@ -50228,13 +54923,13 @@ var SvgEditorvue_type_template_id_30c57726_lang_html_render = function () {
                                     _vm.textSelectionEnabled,
                                   attrs: {
                                     item: item,
+                                    editorId: _vm.editorId,
                                     mode: _vm.mode,
                                     textSelectionEnabled:
                                       _vm.textSelectionEnabled,
                                     patchIndex: _vm.patchIndex,
                                   },
                                   on: {
-                                    "custom-event": _vm.onItemCustomEvent,
                                     "frame-animator": _vm.onFrameAnimatorEvent,
                                   },
                                 }),
@@ -50307,7 +55002,7 @@ var SvgEditorvue_type_template_id_30c57726_lang_html_render = function () {
                             staticClass: "item-link",
                             attrs: {
                               id: "item-link-" + linkIndex,
-                              "xlink:href": link.url,
+                              "xlink:href": _vm.linksAnimated ? "#" : link.url,
                             },
                             on: {
                               click: function ($event) {
@@ -50397,13 +55092,13 @@ var SvgEditorvue_type_template_id_30c57726_lang_html_render = function () {
                                       _vm.textSelectionEnabled,
                                     attrs: {
                                       item: item,
+                                      editorId: _vm.editorId,
                                       textSelectionEnabled:
                                         _vm.textSelectionEnabled,
                                       patchIndex: _vm.patchIndex,
                                       mode: _vm.mode,
                                     },
                                     on: {
-                                      "custom-event": _vm.onItemCustomEvent,
                                       "frame-animator":
                                         _vm.onFrameAnimatorEvent,
                                     },
@@ -50487,6 +55182,7 @@ var SvgEditorvue_type_template_id_30c57726_lang_html_render = function () {
                                 key: item.id + "-" + item.shape,
                                 attrs: {
                                   item: item,
+                                  editorId: _vm.editorId,
                                   patchIndex: _vm.patchIndex,
                                   mode: _vm.mode,
                                 },
@@ -50636,7 +55332,6 @@ var map = __webpack_require__(5161);
 var map_default = /*#__PURE__*/__webpack_require__.n(map);
 // EXTERNAL MODULE: ./node_modules/lodash/max.js
 var max = __webpack_require__(6162);
-var max_default = /*#__PURE__*/__webpack_require__.n(max);
 // EXTERNAL MODULE: ./node_modules/lodash/forEach.js
 var lodash_forEach = __webpack_require__(4486);
 var forEach_default = /*#__PURE__*/__webpack_require__.n(lodash_forEach);
@@ -50649,8 +55344,6 @@ var myMath = __webpack_require__(3590);
 var Item = __webpack_require__(7196);
 // EXTERNAL MODULE: ./src/ui/scheme/ItemFixer.js
 var ItemFixer = __webpack_require__(1377);
-// EXTERNAL MODULE: ./src/ui/components/editor/EventBus.js
-var EventBus = __webpack_require__(536);
 ;// CONCATENATED MODULE: ./node_modules/vue-loader/lib/loaders/templateLoader.js??vue-loader-options!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/ItemSvg.vue?vue&type=template&id=65809a37&lang=html&
 var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
   var _vm = this
@@ -50708,11 +55401,12 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
                   _vm.revision,
                 tag: "component",
                 style: { opacity: _vm.item.selfOpacity / 100.0 },
-                attrs: { item: _vm.item, mode: _vm.mode },
-                on: {
-                  "custom-event": _vm.onShapeCustomEvent,
-                  "frame-animator": _vm.onFrameAnimatorEvent,
+                attrs: {
+                  item: _vm.item,
+                  editorId: _vm.editorId,
+                  mode: _vm.mode,
                 },
+                on: { "frame-animator": _vm.onFrameAnimatorEvent },
               })
             : _vm._e(),
           _vm._v(" "),
@@ -50795,7 +55489,7 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
           _vm._v(" "),
           _vm._l(_vm.textSlots, function (slot) {
             return slot.name !== _vm.hiddenTextSlotName
-              ? _c("g", [
+              ? _c("g", { style: { opacity: _vm.item.selfOpacity / 100.0 } }, [
                   _c(
                     "foreignObject",
                     {
@@ -50870,15 +55564,11 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
                       _vm.item.meta.revision,
                     attrs: {
                       item: childItem,
+                      editorId: _vm.editorId,
                       patchIndex: _vm.patchIndex,
                       mode: _vm.mode,
                     },
-                    on: {
-                      "custom-event": function ($event) {
-                        return _vm.$emit("custom-event", arguments[0])
-                      },
-                      "frame-animator": _vm.onFrameAnimatorEvent,
-                    },
+                    on: { "frame-animator": _vm.onFrameAnimatorEvent },
                   })
                 : _vm._e()
             }),
@@ -50886,9 +55576,7 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
           )
         : _vm._e(),
       _vm._v(" "),
-      _vm.itemSvgOutlinePath &&
-      _vm.shouldDrawEventLayer &&
-      !_vm.textSelectionEnabled
+      _vm.itemSvgOutlinePath && !_vm.textSelectionEnabled
         ? _c("path", {
             staticClass: "svg-event-layer",
             style: { cursor: _vm.item.cursor },
@@ -50902,6 +55590,34 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
               fill: _vm.hoverPathFill,
             },
           })
+        : _vm._e(),
+      _vm._v(" "),
+      _vm.mode === "view" && !_vm.textSelectionEnabled
+        ? _c(
+            "g",
+            _vm._l(_vm.customAreas, function (customArea) {
+              return _c("path", {
+                staticClass: "svg-event-layer",
+                style: {
+                  cursor: customArea.cursor
+                    ? customArea.cursor
+                    : _vm.item.cursor,
+                },
+                attrs: {
+                  "data-preview-ignore": "true",
+                  id: "item-svg-path-" + _vm.item.id,
+                  d: customArea.path,
+                  "data-type": "custom-item-area",
+                  "data-item-id": _vm.item.id,
+                  "data-custom-area-id": customArea.id,
+                  "stroke-width": _vm.hoverPathStrokeWidth,
+                  stroke: "rgba(255, 255, 255, 0)",
+                  fill: _vm.hoverPathFill,
+                },
+              })
+            }),
+            0
+          )
         : _vm._e(),
       _vm._v(" "),
       _vm.shapeType === "missing"
@@ -50971,16 +55687,12 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
                       _vm.textSelectionEnabled,
                     attrs: {
                       item: childItem,
+                      editorId: _vm.editorId,
                       textSelectionEnabled: _vm.textSelectionEnabled,
                       patchIndex: _vm.patchIndex,
                       mode: _vm.mode,
                     },
-                    on: {
-                      "custom-event": function ($event) {
-                        return _vm.$emit("custom-event", arguments[0])
-                      },
-                      "frame-animator": _vm.onFrameAnimatorEvent,
-                    },
+                    on: { "frame-animator": _vm.onFrameAnimatorEvent },
                   })
                 : _vm._e()
             }),
@@ -51003,15 +55715,11 @@ var ItemSvgvue_type_template_id_65809a37_lang_html_render = function () {
                       _vm.textSelectionEnabled,
                     attrs: {
                       item: childItem,
+                      editorId: _vm.editorId,
                       textSelectionEnabled: _vm.textSelectionEnabled,
                       mode: _vm.mode,
                     },
-                    on: {
-                      "custom-event": function ($event) {
-                        return _vm.$emit("custom-event", arguments[0])
-                      },
-                      "frame-animator": _vm.onFrameAnimatorEvent,
-                    },
+                    on: { "frame-animator": _vm.onFrameAnimatorEvent },
                   })
                 : _vm._e()
             }),
@@ -51038,7 +55746,6 @@ var Shape = __webpack_require__(3363);
 var ui_utils = __webpack_require__(4691);
 // EXTERNAL MODULE: ./src/htmlSanitize.js
 var htmlSanitize = __webpack_require__(3762);
-var htmlSanitize_default = /*#__PURE__*/__webpack_require__.n(htmlSanitize);
 // EXTERNAL MODULE: ./src/ui/components/editor/text/ItemText.js
 var ItemText = __webpack_require__(5635);
 ;// CONCATENATED MODULE: ./src/ui/components/effects/Effects.js
@@ -51418,7 +56125,25 @@ function findEffect(effectId) {
 function getDefaultEffectId() {
   return 'drop-shadow';
 }
+// EXTERNAL MODULE: ./src/ui/components/editor/EditorEventBus.js
+var EditorEventBus = __webpack_require__(8595);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/items/ItemSvg.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
 //
 //
 //
@@ -51632,6 +56357,10 @@ function hasStrokeSizeProp(shape) {
 /* harmony default export */ const ItemSvgvue_type_script_lang_js_ = ({
   name: 'ItemSvg',
   props: {
+    editorId: {
+      type: String,
+      required: true
+    },
     item: {
       type: Object
     },
@@ -51657,9 +56386,9 @@ function hasStrokeSizeProp(shape) {
 
   mounted() {
     this.switchShape(this.item.shape);
-    EventBus/* default.subscribeForItemChanged */.Z.subscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.item.changed.specific.$on */.Z.item.changed.specific.$on(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$on */.Z.textSlot.triggered.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$on */.Z.textSlot.canceled.specific.$on(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
     const shape = Shape/* default.find */.Z.find(this.item.shape);
 
     if (shape && shape.shapeEvents.mounted) {
@@ -51670,9 +56399,9 @@ function hasStrokeSizeProp(shape) {
   },
 
   beforeDestroy() {
-    EventBus/* default.unsubscribeForItemChanged */.Z.unsubscribeForItemChanged(this.item.id, this.onItemChanged);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_TRIGGERED */.Z.ITEM_TEXT_SLOT_EDIT_TRIGGERED, this.onItemTextSlotEditTriggered);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TEXT_SLOT_EDIT_CANCELED */.Z.ITEM_TEXT_SLOT_EDIT_CANCELED, this.onItemTextSlotEditCanceled);
+    EditorEventBus/* default.item.changed.specific.$off */.Z.item.changed.specific.$off(this.editorId, this.item.id, this.onItemChanged);
+    EditorEventBus/* default.textSlot.triggered.specific.$off */.Z.textSlot.triggered.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditTriggered);
+    EditorEventBus/* default.textSlot.canceled.specific.$off */.Z.textSlot.canceled.specific.$off(this.editorId, this.item.id, this.onItemTextSlotEditCanceled);
   },
 
   data() {
@@ -51683,7 +56412,6 @@ function hasStrokeSizeProp(shape) {
       oldShape: this.item.shape,
       itemStandardCurves: [],
       itemSvgOutlinePath: null,
-      shouldDrawEventLayer: true,
       shouldRenderText: true,
       // using revision in order to trigger full re-render of item component
       // on each item changed event revision is incremented
@@ -51698,7 +56426,8 @@ function hasStrokeSizeProp(shape) {
       filterUrl: '',
       backgroundEffects: [],
       foregroundEffects: [],
-      svgItemTransform: this.calculateSVGItemTransform()
+      svgItemTransform: this.calculateSVGItemTransform(),
+      customAreas: shape && shape.computeCustomAreas ? shape.computeCustomAreas(this.item) : []
     };
 
     if (shape) {
@@ -51738,10 +56467,7 @@ function hasStrokeSizeProp(shape) {
 
       this.shapeType = shape.shapeType;
       this.supportsStrokeSize = hasStrokeSizeProp(shape);
-
-      if (shape.editorProps && shape.editorProps.ignoreEventLayer && this.mode === 'view' || this.mode === 'view' && this.textSelectionEnabled) {
-        this.shouldDrawEventLayer = false;
-      }
+      this.customAreas = shape && shape.computeCustomAreas ? shape.computeCustomAreas(this.item) : [];
 
       if (shape.vueComponent) {
         this.shapeComponent = shape.vueComponent;
@@ -51776,6 +56502,7 @@ function hasStrokeSizeProp(shape) {
         }
 
         this.itemSvgOutlinePath = shape.computeOutline(this.item);
+        this.customAreas = shape && shape.computeCustomAreas ? shape.computeCustomAreas(this.item) : [];
       }
 
       if (!shape.editorProps || !shape.editorProps.customTextRendering) {
@@ -51797,14 +56524,6 @@ function hasStrokeSizeProp(shape) {
       this.$forceUpdate();
     },
 
-    onShapeCustomEvent(eventName, ...args) {
-      this.$emit('custom-event', {
-        itemId: this.item.id,
-        eventName: eventName,
-        args: arguments
-      });
-    },
-
     onFrameAnimatorEvent(args) {
       this.$emit('frame-animator', args);
     },
@@ -51823,7 +56542,7 @@ function hasStrokeSizeProp(shape) {
 
         if (itemTextSlot) {
           slot.text = itemTextSlot.text || '';
-          slot.sanitizedText = htmlSanitize_default()(slot.text);
+          slot.sanitizedText = (0,htmlSanitize/* default */.Z)(slot.text);
 
           if (!slot.cssClass) {
             slot.cssClass = '';
@@ -51839,13 +56558,11 @@ function hasStrokeSizeProp(shape) {
     },
 
     onItemTextSlotEditTriggered(item, slotName, area, markupDisabled) {
-      if (item.id === this.item.id) {
-        this.hiddenTextSlotName = slotName;
-      }
+      this.hiddenTextSlotName = slotName;
     },
 
     onItemTextSlotEditCanceled(item, slotName) {
-      if (item.id === this.item.id && this.hiddenTextSlotName === slotName) {
+      if (this.hiddenTextSlotName === slotName) {
         this.hiddenTextSlotName = null;
       }
     }
@@ -51979,182 +56696,17 @@ var AnimationRegistry = __webpack_require__(9737);
 var ValueAnimation = __webpack_require__(3805);
 // EXTERNAL MODULE: ./src/ui/userevents/Events.js
 var Events = __webpack_require__(6085);
-;// CONCATENATED MODULE: ./src/ui/store/StoreUtils.js
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
-
-
-
-/* harmony default export */ const store_StoreUtils = ({
-  setItemControlPoints(store, item) {
-    const shape = Shape/* default.find */.Z.find(item.shape);
-
-    if (shape && shape.controlPoints) {
-      const controlPoints = shape.controlPoints.make(item); // since item control points are supposed to be used by multi-item edit box
-      // and it uses scale of 1 always
-      // we need to convert positions of those points
-      // by recalculating the complete scaling effect of the item relative to the world
-
-      const scalingVector = (0,SchemeContainer/* worldScalingVectorOnItem */.pD)(item);
-      forEach_default()(controlPoints, controlPoint => {
-        controlPoint.x = controlPoint.x * scalingVector.x;
-        controlPoint.y = controlPoint.y * scalingVector.y;
-      });
-      store.dispatch('setItemControlPoints', controlPoints);
-    } else {
-      this.clearItemControlPoints(store);
-    }
-  },
-
-  clearItemControlPoints(store) {
-    store.dispatch('clearItemControlPoints');
-  },
-
-  updateAllCurveEditPoints(store, item) {
-    // the following action will reset all the curve eidt points in store
-    store.dispatch('setCurveEditItem', item);
-  },
-
-  updateCurveEditPoint(store, item, pathId, pointId, point) {
-    store.dispatch('updateCurveEditPoint', {
-      item,
-      pathId,
-      pointId,
-      point
-    });
-  },
-
-  toggleCurveEditPointSelection(store, pathId, pointId, inclusive) {
-    store.dispatch('toggleCurveEditPointSelection', {
-      pathId,
-      pointId,
-      inclusive
-    });
-  },
-
-  resetCurveEditPointSelection(store) {
-    store.dispatch('resetCurveEditPointSelection');
-  },
-
-  selectCurveEditPoint(store, pathId, pointId, inclusive) {
-    store.dispatch('selectCurveEditPoint', {
-      pathId,
-      pointId,
-      inclusive
-    });
-  },
-
-  getCurveEditPaths(store) {
-    return store.state.curveEditing.paths;
-  },
-
-  setMultiSelectBox(store, box) {
-    store.dispatch('setMultiSelectBox', box);
-  },
-
-  setSelectedConnectorPath(store, path) {
-    store.dispatch('setSelectedConnectorPath', path);
-  },
-
-  /**
-   * 
-   * @param {*} store 
-   * @param {ItemSnapper} snapper 
-   */
-  setItemSnapper(store, snapper) {
-    store.dispatch('setItemSnapper', snapper);
-  },
-
-  clearItemSnappers(store) {
-    store.dispatch('clearItemSnappers');
-  },
-
-  setAutoRemount(store, shouldAutoRemount) {
-    store.dispatch('setAutoRemount', shouldAutoRemount);
-  },
-
-  setShowPivot(store, show) {
-    store.dispatch('setShowPivot', show);
-  },
-
-  setShowClickableMarkers(store, show) {
-    store.dispatch('setShowClickableMarkers', show);
-  },
-
-  proposeConnectorDestinationItems(store, connectorItemId, mx, my) {
-    store.dispatch('proposeConnectorDestinationItems', {
-      connectorItemId,
-      mx,
-      my
-    });
-  },
-
-  disableProposeConnectorDestinationItems(store) {
-    store.dispatch('disableProposeConnectorDestinationItems');
-  },
-
-  addInfoSystemMessage(store, message, id) {
-    store.dispatch('addSystemMessage', {
-      status: 'info',
-      message,
-      id
-    });
-  },
-
-  addErrorSystemMessage(store, message, id) {
-    store.dispatch('addSystemMessage', {
-      status: 'error',
-      message,
-      id
-    });
-  },
-
-  removeSystemMessage(store, id) {
-    store.dispatch('removeSystemMessage', id);
-  },
-
-  startAnimationEditor(store, framePlayer) {
-    store.dispatch('startAnimationEditor', framePlayer);
-  },
-
-  setAnimationEditorRecording(store, isRecording) {
-    store.dispatch('setAnimationEditorRecording', isRecording);
-  },
-
-  setDefaultConnectorSmoothing(store, smoothing) {
-    store.dispatch('setDefaultConnectorSmoothing', smoothing);
-  },
-
-  copyItemStyle(store, item) {
-    store.dispatch('copyItemStyle', item);
-  },
-
-  // used in connecting state and set the current connector item that is being created
-  setCurrentConnector(store, item) {
-    store.dispatch('setCurrentConnector', item);
-  },
-
-  addArtPack(store, artPackId, artPack) {
-    store.dispatch('addArtPack', {
-      artPack,
-      artPackId
-    });
-  },
-
-  removeArtPack(store, artPackId) {
-    store.dispatch('removeArtPack', artPackId);
-  },
-
-  registerShapeGroupId(store, shapeGroupId) {
-    store.dispatch('registerShapeGroupId', shapeGroupId);
-  }
-
-});
+// EXTERNAL MODULE: ./src/ui/store/StoreUtils.js
+var store_StoreUtils = __webpack_require__(4925);
 // EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/Component.vue + 4 modules
 var Component = __webpack_require__(332);
 ;// CONCATENATED MODULE: ./node_modules/babel-loader/lib/index.js!./node_modules/vue-loader/lib/index.js??vue-loader-options!./src/ui/components/editor/SvgEditor.vue?vue&type=script&lang=js&
+//
+//
+//
+//
+//
+//
 //
 //
 //
@@ -52359,9 +56911,9 @@ const lastMousePosition = {
 };
 /* harmony default export */ const SvgEditorvue_type_script_lang_js_ = ({
   props: {
-    offline: {
-      type: Boolean,
-      default: false
+    editorId: {
+      type: String,
+      required: true
     },
     mode: {
       type: String,
@@ -52380,6 +56932,10 @@ const lastMousePosition = {
       default: null
     },
     patchIndex: {
+      type: Object,
+      default: null
+    },
+    highlightedItems: {
       type: Object,
       default: null
     },
@@ -52404,23 +56960,23 @@ const lastMousePosition = {
 
   beforeMount() {
     if (this.mode === 'view') {
-      store_StoreUtils.setShowClickableMarkers(this.$store, this.schemeContainer.scheme.style.itemMarkerToggled);
+      store_StoreUtils/* default.setShowClickableMarkers */.Z.setShowClickableMarkers(this.$store, this.schemeContainer.scheme.style.itemMarkerToggled);
       this.buildClickableItemMarkers();
       this.reindexUserEvents();
       this.prepareFrameAnimations();
     }
 
-    EventBus/* default.$on */.Z.$on(EventBus/* default.BRING_TO_VIEW */.Z.BRING_TO_VIEW, this.onBringToView);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_LINKS_SHOW_REQUESTED */.Z.ITEM_LINKS_SHOW_REQUESTED, this.onShowItemLinks);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ANY_ITEM_CLICKED */.Z.ANY_ITEM_CLICKED, this.onAnyItemClicked);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ANY_ITEM_SELECTED */.Z.ANY_ITEM_SELECTED, this.onAnyItemSelected);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.VOID_CLICKED */.Z.VOID_CLICKED, this.onVoidClicked);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.VOID_DOUBLE_CLICKED */.Z.VOID_DOUBLE_CLICKED, this.onVoidDoubleClicked);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEMS_HIGHLIGHTED */.Z.ITEMS_HIGHLIGHTED, this.highlightItems);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.COMPONENT_SCHEME_MOUNTED */.Z.COMPONENT_SCHEME_MOUNTED, this.onComponentSchemeMounted);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.COMPONENT_LOAD_FAILED */.Z.COMPONENT_LOAD_FAILED, this.onComponentLoadFailed);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.FRAME_PLAYER_PREPARED */.Z.FRAME_PLAYER_PREPARED, this.onFramePlayerPrepared);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.CLICKABLE_MARKERS_TOGGLED */.Z.CLICKABLE_MARKERS_TOGGLED, this.updateClickableMarkers);
+    EditorEventBus/* default.zoomToAreaRequested.$on */.Z.zoomToAreaRequested.$on(this.editorId, this.onBringToView);
+    EditorEventBus/* default.item.linksShowRequested.any.$on */.Z.item.linksShowRequested.any.$on(this.editorId, this.onShowItemLinks);
+    EditorEventBus/* default.item.clicked.any.$on */.Z.item.clicked.any.$on(this.editorId, this.onAnyItemClicked);
+    EditorEventBus/* default.void.clicked.$on */.Z["void"].clicked.$on(this.editorId, this.onVoidClicked);
+    EditorEventBus/* default.void.doubleClicked.$on */.Z["void"].doubleClicked.$on(this.editorId, this.onVoidDoubleClicked);
+    EditorEventBus/* default.item.selected.any.$on */.Z.item.selected.any.$on(this.editorId, this.onAnyItemSelected);
+    EditorEventBus/* default.component.mounted.any.$on */.Z.component.mounted.any.$on(this.editorId, this.onComponentSchemeMounted);
+    EditorEventBus/* default.component.loadFailed.any.$on */.Z.component.loadFailed.any.$on(this.editorId, this.onComponentLoadFailed);
+    EditorEventBus/* default.framePlayer.prepared.$on */.Z.framePlayer.prepared.$on(this.editorId, this.onFramePlayerPrepared);
+    EditorEventBus/* default.clickableMarkers.toggled.$on */.Z.clickableMarkers.toggled.$on(this.editorId, this.updateClickableMarkers);
+    EditorEventBus/* default.editorResized.$on */.Z.editorResized.$on(this.editorId, this.updateSvgSize);
   },
 
   mounted() {
@@ -52445,20 +57001,20 @@ const lastMousePosition = {
   beforeDestroy() {
     window.removeEventListener("resize", this.updateSvgSize);
     this.mouseEventsEnabled = false;
-    EventBus/* default.$off */.Z.$off(EventBus/* default.BRING_TO_VIEW */.Z.BRING_TO_VIEW, this.onBringToView);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_LINKS_SHOW_REQUESTED */.Z.ITEM_LINKS_SHOW_REQUESTED, this.onShowItemLinks);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ANY_ITEM_CLICKED */.Z.ANY_ITEM_CLICKED, this.onAnyItemClicked);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ANY_ITEM_SELECTED */.Z.ANY_ITEM_SELECTED, this.onAnyItemSelected);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.VOID_CLICKED */.Z.VOID_CLICKED, this.onVoidClicked);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.VOID_DOUBLE_CLICKED */.Z.VOID_DOUBLE_CLICKED, this.onVoidDoubleClicked);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEMS_HIGHLIGHTED */.Z.ITEMS_HIGHLIGHTED, this.highlightItems);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.COMPONENT_SCHEME_MOUNTED */.Z.COMPONENT_SCHEME_MOUNTED, this.onComponentSchemeMounted);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.COMPONENT_LOAD_FAILED */.Z.COMPONENT_LOAD_FAILED, this.onComponentLoadFailed);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.FRAME_PLAYER_PREPARED */.Z.FRAME_PLAYER_PREPARED, this.onFramePlayerPrepared);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.CLICKABLE_MARKERS_TOGGLED */.Z.CLICKABLE_MARKERS_TOGGLED, this.updateClickableMarkers);
+    EditorEventBus/* default.zoomToAreaRequested.$off */.Z.zoomToAreaRequested.$off(this.editorId, this.onBringToView);
+    EditorEventBus/* default.item.linksShowRequested.any.$off */.Z.item.linksShowRequested.any.$off(this.editorId, this.onShowItemLinks);
+    EditorEventBus/* default.item.clicked.any.$off */.Z.item.clicked.any.$off(this.editorId, this.onAnyItemClicked);
+    EditorEventBus/* default.void.clicked.$off */.Z["void"].clicked.$off(this.editorId, this.onVoidClicked);
+    EditorEventBus/* default.void.doubleClicked.$off */.Z["void"].doubleClicked.$off(this.editorId, this.onVoidDoubleClicked);
+    EditorEventBus/* default.item.selected.any.$off */.Z.item.selected.any.$off(this.editorId, this.onAnyItemSelected);
+    EditorEventBus/* default.component.mounted.any.$off */.Z.component.mounted.any.$off(this.editorId, this.onComponentSchemeMounted);
+    EditorEventBus/* default.component.loadFailed.any.$off */.Z.component.loadFailed.any.$off(this.editorId, this.onComponentLoadFailed);
+    EditorEventBus/* default.framePlayer.prepared.$off */.Z.framePlayer.prepared.$off(this.editorId, this.onFramePlayerPrepared);
+    EditorEventBus/* default.clickableMarkers.toggled.$off */.Z.clickableMarkers.toggled.$off(this.editorId, this.updateClickableMarkers);
+    EditorEventBus/* default.editorResized.$off */.Z.editorResized.$off(this.editorId, this.updateSvgSize);
 
     if (this.useMouseWheel) {
-      var svgElement = this.$refs.svgDomElement;
+      const svgElement = this.$refs.svgDomElement;
 
       if (svgElement) {
         svgElement.removeEventListener('wheel', this.mouseWheel);
@@ -52474,17 +57030,29 @@ const lastMousePosition = {
       width: window.innerWidth,
       height: window.innerHeight,
       selectedItemLinks: [],
+      // this flag is used in order to make links non-clickable while they are animated.
+      // in mobile devices a click is registered when links are rendered under the thumb.
+      linksAnimated: false,
       lastHoveredItem: null,
       // ids of items that have subscribed for Init event
       itemsForInit: {},
       // array of markers for items that are clickable
       clickableItemMarkers: [],
-      worldHighlightedItems: []
+      worldHighlightedItems: [],
+      lastTouchStartTime: 0,
+      lastTouchStartCoords: {
+        x: -1000,
+        y: -1000
+      }
     };
   },
 
   methods: {
     updateSvgSize() {
+      if (!this.$refs.svgDomElement) {
+        return;
+      }
+
       const svgRect = this.$refs.svgDomElement.getBoundingClientRect();
       this.width = svgRect.width;
       this.height = svgRect.height;
@@ -52497,7 +57065,17 @@ const lastMousePosition = {
     },
 
     mouseCoordsFromEvent(event) {
-      return this.mouseCoordsFromPageCoords(event.pageX, event.pageY);
+      if (event.touches) {
+        if (event.touches.length > 0) {
+          return this.mouseCoordsFromPageCoords(event.touches[0].pageX, event.touches[0].pageY);
+        } else if (event.changedTouches.length > 0) {
+          return this.mouseCoordsFromPageCoords(event.changedTouches[0].pageX, event.changedTouches[0].pageY);
+        }
+      } else {
+        return this.mouseCoordsFromPageCoords(event.pageX, event.pageY);
+      }
+
+      return null;
     },
 
     mouseCoordsFromPageCoords(pageX, pageY) {
@@ -52533,7 +57111,7 @@ const lastMousePosition = {
             pathIndex: parseInt(element.getAttribute('data-path-index')),
             controlPointIndex: parseInt(element.getAttribute('data-path-control-point-index'))
           };
-        } else if (elementType === 'multi-item-edit-box' || elementType === 'multi-item-edit-box-rotational-dragger' || elementType === 'multi-item-edit-box-pivot-dragger' || elementType === 'multi-item-edit-box-reset-image-crop-link') {
+        } else if (elementType === 'multi-item-edit-box' || elementType === 'multi-item-edit-box-rotational-dragger' || elementType === 'multi-item-edit-box-pivot-dragger' || elementType === 'multi-item-edit-box-reset-image-crop-link' || elementType === 'multi-item-edit-box-context-menu-button') {
           return {
             type: elementType,
             multiItemEditBox: this.schemeContainer.multiItemEditBox
@@ -52543,6 +57121,12 @@ const lastMousePosition = {
             type: elementType,
             multiItemEditBox: this.schemeContainer.multiItemEditBox,
             draggerEdges: map_default()(element.getAttribute('data-dragger-edges').split(','), edge => edge.trim())
+          };
+        } else if (elementType === 'custom-item-area') {
+          return {
+            type: elementType,
+            item: this.schemeContainer.findItemById(element.getAttribute('data-item-id')),
+            areaId: element.getAttribute('data-custom-area-id')
           };
         }
 
@@ -52611,44 +57195,81 @@ const lastMousePosition = {
     },
 
     mouseWheel(event) {
-      var coords = this.mouseCoordsFromEvent(event);
-      var p = this.toLocalPoint(coords.x, coords.y);
+      const coords = this.mouseCoordsFromEvent(event);
+      const p = this.toLocalPoint(coords.x, coords.y);
       this.$emit('mouse-wheel', p.x, p.y, coords.x, coords.y, event);
+    },
+
+    touchStart(event) {
+      if (this.mouseEventsEnabled) {
+        event.preventDefault();
+      } else {
+        return;
+      }
+
+      const coords = this.mouseCoordsFromEvent(event);
+      const now = performance.now();
+      const d = (coords.x - this.lastTouchStartCoords.x) * (coords.x - this.lastTouchStartCoords.x) + (coords.y - this.lastTouchStartCoords.y) * (coords.y - this.lastTouchStartCoords.y);
+
+      if (now - this.lastTouchStartTime < 500 && d < 50) {
+        this.mouseEvent('mouse-double-click', event);
+      } else {
+        this.mouseEvent('mouse-down', event);
+      }
+
+      this.lastTouchStartTime = now;
+      this.lastTouchStartCoords = coords;
+    },
+
+    touchEnd(event) {
+      if (this.mouseEventsEnabled) {
+        event.preventDefault();
+      } else {
+        return;
+      }
+
+      this.mouseEvent('mouse-up', event);
+    },
+
+    touchMove(event) {
+      if (this.mouseEventsEnabled) {
+        event.preventDefault();
+      } else {
+        return;
+      }
+
+      this.mouseEvent('mouse-move', event);
     },
 
     mouseMove(event) {
       if (this.mouseEventsEnabled) {
-        const coords = this.mouseCoordsFromEvent(event);
-        const p = this.toLocalPoint(coords.x, coords.y);
-        lastMousePosition.x = coords.x;
-        lastMousePosition.y = coords.y;
-        this.$emit('mouse-move', p.x, p.y, coords.x, coords.y, this.identifyElement(event.srcElement, p), event);
+        event.preventDefault();
+      } else {
+        return;
       }
+
+      this.mouseEvent('mouse-move', event);
     },
 
     mouseDown(event) {
+      this.mouseEvent('mouse-down', event);
+    },
+
+    mouseUp(event) {
+      this.mouseEvent('mouse-up', event);
+    },
+
+    mouseDoubleClick(event) {
+      this.mouseEvent('mouse-double-click', event);
+    },
+
+    mouseEvent(eventName, event) {
       if (this.mouseEventsEnabled) {
         var coords = this.mouseCoordsFromEvent(event);
         var p = this.toLocalPoint(coords.x, coords.y);
         lastMousePosition.x = coords.x;
         lastMousePosition.y = coords.y;
-        this.$emit('mouse-down', p.x, p.y, coords.x, coords.y, this.identifyElement(event.srcElement, p), event);
-      }
-    },
-
-    mouseUp(event) {
-      if (this.mouseEventsEnabled) {
-        var coords = this.mouseCoordsFromEvent(event);
-        var p = this.toLocalPoint(coords.x, coords.y);
-        this.$emit('mouse-up', p.x, p.y, coords.x, coords.y, this.identifyElement(event.srcElement, p), event);
-      }
-    },
-
-    mouseDoubleClick(event) {
-      if (this.mouseEventsEnabled) {
-        var coords = this.mouseCoordsFromEvent(event);
-        var p = this.toLocalPoint(coords.x, coords.y);
-        this.$emit('mouse-double-click', p.x, p.y, coords.x, coords.y, this.identifyElement(event.srcElement, p), event);
+        this.$emit(eventName, p.x, p.y, coords.x, coords.y, this.identifyElement(event.srcElement, p), event);
       }
     },
 
@@ -52693,8 +57314,7 @@ const lastMousePosition = {
       }
     },
 
-    highlightItems(itemIds, options) {
-      const highlightPins = options ? options.highlightPins : false;
+    highlightItems(itemIds, showPins) {
       this.worldHighlightedItems = [];
       forEach_default()(itemIds, itemId => {
         const item = this.schemeContainer.findItemById(itemId);
@@ -52751,7 +57371,7 @@ const lastMousePosition = {
           scalingFactor
         };
 
-        if (highlightPins) {
+        if (showPins) {
           itemHighlight.pins = shape.getPins(item);
         }
 
@@ -52772,20 +57392,18 @@ const lastMousePosition = {
      * @param {Object} itemsForInit - used for collecting items that have subscribed for init event
      */
     indexUserEventsInItems(items, itemsForInit) {
-      forEach_default()(items, rootItem => {
-        (0,Item/* traverseItems */.Hp)(rootItem, item => {
-          if (item.behavior && item.behavior.events) {
-            forEach_default()(item.behavior.events, event => {
-              const eventCallback = behaviorCompiler.compileActions(this.schemeContainer, item, event.actions);
+      (0,Item/* traverseItems */.Hp)(items, item => {
+        if (item.behavior && item.behavior.events) {
+          forEach_default()(item.behavior.events, event => {
+            const eventCallback = behaviorCompiler.compileActions(this.schemeContainer, item, event.actions);
 
-              if (event.event === Events/* default.standardEvents.init.id */.Z.standardEvents.init.id) {
-                itemsForInit[item.id] = 1;
-              }
+            if (event.event === Events/* default.standardEvents.init.id */.Z.standardEvents.init.id) {
+              itemsForInit[item.id] = 1;
+            }
 
-              this.userEventBus.subscribeItemEvent(item.id, event.event, eventCallback);
-            });
-          }
-        });
+            this.userEventBus.subscribeItemEvent(item.id, event.event, eventCallback);
+          });
+        }
       });
     },
 
@@ -52852,7 +57470,7 @@ const lastMousePosition = {
           frameAnimation.setStopFrame(-1);
         }
 
-        AnimationRegistry/* default.play */.Z.play(frameAnimation, itemId, 'frame-player');
+        (0,AnimationRegistry/* playInAnimationRegistry */.oK)(this.editorId, frameAnimation, itemId, 'frame-player');
       } else if (args.operation === 'setFrame') {
         frameAnimation.toggleFrame(args.frame);
       } else if (args.operation === 'stop') {
@@ -52861,7 +57479,7 @@ const lastMousePosition = {
     },
 
     onSvgItemLinkClick(url, event) {
-      if (url.startsWith('/')) {
+      if (url.startsWith('/') && !this.linksAnimated) {
         window.location = url;
         event.preventDefault();
       }
@@ -52932,7 +57550,7 @@ const lastMousePosition = {
         (0,ItemFixer/* enrichItemWithDefaults */.z9)(textItem);
         this.schemeContainer.addItem(textItem);
         this.$nextTick(() => {
-          EventBus/* default.emitItemTextSlotEditTriggered */.Z.emitItemTextSlotEditTriggered(textItem, 'body', {
+          EditorEventBus/* default.textSlot.triggered.specific.$emit */.Z.textSlot.triggered.specific.$emit(this.editorId, textItem, 'body', {
             x: 0,
             y: 0,
             w: textItem.area.w,
@@ -52951,7 +57569,7 @@ const lastMousePosition = {
     onBringToView(area, animated) {
       let newZoom = 1.0;
 
-      if (area.w > 0 && area.h > 0 && this.width - 400 > 0 && this.height > 0) {
+      if (area.w > 0 && area.h > 0 && this.width > 0 && this.height > 0) {
         newZoom = Math.floor(100.0 * Math.min(this.width / area.w, this.height / area.h)) / 100.0;
         newZoom = Math.max(0.0001, newZoom);
       }
@@ -52967,7 +57585,7 @@ const lastMousePosition = {
       const destY = this.height / 2 - (area.y + area.h / 2) * newZoom;
 
       if (animated) {
-        AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+        (0,AnimationRegistry/* playInAnimationRegistry */.oK)(this.editorId, new ValueAnimation/* default */.ZP({
           durationMillis: 400,
           animationType: 'ease-out',
           update: t => {
@@ -52988,13 +57606,17 @@ const lastMousePosition = {
     },
 
     startLinksAnimation() {
-      AnimationRegistry/* default.play */.Z.play(new ValueAnimation/* default */.ZP({
+      this.linksAnimated = true;
+      (0,AnimationRegistry/* playInAnimationRegistry */.oK)(this.editorId, new ValueAnimation/* default */.ZP({
         durationMillis: 300,
         update: t => {
           forEach_default()(this.selectedItemLinks, link => {
             link.x = link.startX * (1.0 - t) + link.destinationX * t;
             link.y = link.startY * (1.0 - t) + link.destinationY * t;
           });
+        },
+        destroy: () => {
+          this.linksAnimated = false;
         }
       }), 'screen', 'links-animation');
     },
@@ -53014,17 +57636,13 @@ const lastMousePosition = {
           cy = this.height / 4;
         }
 
-        let step = 40;
+        let step = Math.max(20, Math.min(40, this.height / (item.links.length + 1)));
         let y0 = cy - item.links.length * step / 2;
         const worldPointRight = this.schemeContainer.worldPointOnItem(item.area.w, 0, item);
-        let destinationX = this._x(worldPointRight.x) + 10; // taking side panel into account
+        let destinationX = this._x(worldPointRight.x) + 10;
 
-        if (destinationX > this.width - 500) {
-          let maxLinkLength = max_default()(map_default()(item.links, link => link.title ? link.title.length : link.url.length));
-
-          const leftX = this._x(this.schemeContainer.worldPointOnItem(0, 0, item).x);
-
-          destinationX = leftX - maxLinkLength * LINK_FONT_SYMBOL_SIZE;
+        if (this.width - destinationX < 300) {
+          destinationX = Math.max(10, this.width - 300);
         } // perhaps not the best way to handle this, but for now this trick should do
         // drive app uses different type of router and therefor we need to adjust the url so that it can properly reference other diagrams
 
@@ -53059,7 +57677,7 @@ const lastMousePosition = {
     },
 
     informUpdateOfScreenTransform(screenTransform) {
-      EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, screenTransform);
+      this.$emit('screen-transform-updated', screenTransform);
     },
 
     calculateLinkBackgroundRectWidth(link) {
@@ -53079,29 +57697,6 @@ const lastMousePosition = {
         x: (mouseX - this.schemeContainer.screenTransform.x) / this.schemeContainer.screenTransform.scale,
         y: (mouseY - this.schemeContainer.screenTransform.y) / this.schemeContainer.screenTransform.scale
       };
-    },
-
-    onItemCustomEvent(event) {
-      if (event.eventName === 'clicked') {
-        // handling links and toolip/side-panel appearance
-        const item = this.schemeContainer.findItemById(event.itemId);
-
-        if (item.links && item.links.length > 0) {
-          this.onShowItemLinks(item);
-        }
-
-        if (item.description.trim().length > 8) {
-          if (item.interactionMode === Item/* ItemInteractionMode.SIDE_PANEL */.pp.SIDE_PANEL) {
-            EventBus/* default.$emit */.Z.$emit(EventBus/* default.ITEM_SIDE_PANEL_TRIGGERED */.Z.ITEM_SIDE_PANEL_TRIGGERED, item);
-          } else if (item.interactionMode === Item/* ItemInteractionMode.TOOLTIP */.pp.TOOLTIP) {
-            EventBus/* default.$emit */.Z.$emit(EventBus/* default.ITEM_TOOLTIP_TRIGGERED */.Z.ITEM_TOOLTIP_TRIGGERED, item, lastMousePosition.x, lastMousePosition.y);
-          }
-        }
-      }
-
-      if (this.userEventBus) {
-        this.userEventBus.emitItemEvent(event.itemId, event.eventName);
-      }
     },
 
     /**
@@ -53273,6 +57868,10 @@ const lastMousePosition = {
     textSelectionEnabled(isEnabled) {
       this.mouseEventsEnabled = !(this.mode === 'view' && isEnabled);
       this.$forceUpdate();
+    },
+
+    highlightedItems(value) {
+      this.highlightItems(value.itemIds, value.showPins);
     }
 
   }
@@ -53436,7 +58035,7 @@ ItemTooltipvue_type_template_id_422bfce5_render._withStripped = true
     },
 
     sanitizedItemDescription() {
-      return htmlSanitize_default()(this.item.description);
+      return (0,htmlSanitize/* default */.Z)(this.item.description);
     }
 
   }
@@ -53553,7 +58152,7 @@ ItemDetailsvue_type_template_id_d1e030b8_lang_html_render._withStripped = true
   },
   computed: {
     sanitizedItemDescription() {
-      return htmlSanitize_default()(this.item.description);
+      return (0,htmlSanitize/* default */.Z)(this.item.description);
     }
 
   },
@@ -54884,8 +59483,6 @@ function createSettingStorageFromLocalStorage(name, limit) {
 // EXTERNAL MODULE: ./node_modules/shortid/index.js
 var shortid = __webpack_require__(4670);
 var shortid_default = /*#__PURE__*/__webpack_require__.n(shortid);
-// EXTERNAL MODULE: ./src/ui/components/editor/items/shapes/StandardCurves.js
-var StandardCurves = __webpack_require__(8270);
 ;// CONCATENATED MODULE: ./src/ui/store/Store.js
 function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); if (enumerableOnly) { symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; }); } keys.push.apply(keys, symbols); } return keys; }
 
@@ -54902,97 +59499,22 @@ function _defineProperty(obj, key, value) { if (key in obj) { Object.definePrope
 
 
 
-
-
 vue_default().use(vuex_esm);
 const DEFAULT_CONNECTOR_SMOOTHING = 'defaultConnectorSmoothing';
 const myStorage = createSettingStorageFromLocalStorage('store', 100);
-
-function createCurvePointConverter(item) {
-  return point => {
-    const convertedPoint = ui_utils/* default.clone */.Z.clone(point);
-    const p = (0,SchemeContainer/* worldPointOnItem */.rs)(point.x, point.y, item);
-    convertedPoint.x = p.x;
-    convertedPoint.y = p.y;
-
-    if (point.t === 'B') {
-      const p1 = (0,SchemeContainer/* worldPointOnItem */.rs)(point.x + point.x1, point.y + point.y1, item);
-      convertedPoint.x1 = p1.x - p.x;
-      convertedPoint.y1 = p1.y - p.y;
-    }
-
-    if (point.t === 'B') {
-      const p2 = (0,SchemeContainer/* worldPointOnItem */.rs)(point.x + point.x2, point.y + point.y2, item);
-      convertedPoint.x2 = p2.x - p.x;
-      convertedPoint.y2 = p2.y - p.y;
-    }
-
-    return convertedPoint;
-  };
-}
-
-function enrichCurvePoint(point) {
-  if (point.t === 'B') {
-    let length = Math.sqrt(point.x1 * point.x1 + point.y1 * point.y1);
-    let vx1 = 1,
-        vy1 = 0;
-
-    if (length > 0.000001) {
-      vx1 = point.x1 / length;
-      vy1 = point.y1 / length;
-    }
-
-    length = Math.sqrt(point.x2 * point.x2 + point.y2 * point.y2);
-    let vx2 = 1,
-        vy2 = 0;
-
-    if (length > 0.000001) {
-      vx2 = point.x2 / length;
-      vy2 = point.y2 / length;
-    }
-
-    point.vx1 = vx1;
-    point.vy1 = vy1;
-    point.vx2 = vx2;
-    point.vy2 = vy2;
-  }
-}
-
-function validatePointIds(pathId, pointId, curveEditing) {
-  return pathId >= 0 && pathId < curveEditing.paths.length && pointId >= 0 && pointId < curveEditing.paths[pathId].points.length;
-}
-
-function findFirstSelectedCurveEditPoint(paths) {
-  for (let i = 0; i < paths.length; i++) {
-    for (let j = 0; j < paths[i].points.length; j++) {
-      if (paths[i].points[j].selected) {
-        return paths[i].points[j];
-      }
-    }
-  }
-
-  return null;
-}
-
 const store = new vuex_esm.Store({
   state: {
     //rootPath is used in the header for a home link, since if this is being hosted in GitHub Pages the we cannot use '/' as root path
     rootPath: '/',
     assetsPath: '/assets',
+    docsPath: '/docs',
+    docsLinkTarget: '_blank',
     apiClient: null,
-    schemeModified: false,
-    editorStateName: 'interact',
     editorSubStateName: null,
     itemMenu: {
       artPackIds: new Set(),
       artPacks: [],
       shapeGroupIds: new Set()
-    },
-    curveEditing: {
-      // item whose curve is currently edited
-      item: null,
-      paths: [],
-      firstSelectedPoint: null
     },
     // used in "connecting" state
     connecting: {
@@ -55012,11 +59534,6 @@ const store = new vuex_esm.Store({
     // toggles clickable item markers in view mode so that users can see
     // what they can click on the diagram and which elements are interactive
     showClickableMarkers: false,
-    // stores the state of the history in scheme editing
-    history: {
-      undoable: false,
-      redoable: false
-    },
     // item which style should be copied to other items
     copiedStyleItem: null,
     snap: {
@@ -55057,15 +59574,19 @@ const store = new vuex_esm.Store({
     systemMessages: [],
     draw: {
       epsilon: 5
-    },
-    animationEditor: {
-      currentFramePlayer: null,
-      isRecording: false
     }
   },
   mutations: {
     SET_ROOT_PATH(state, path) {
       state.rootPath = path;
+    },
+
+    SET_DOCS_PATH(state, path) {
+      state.docsPath = path;
+    },
+
+    SET_DOCS_LINK_TARGET(state, target) {
+      state.docsLinkTarget = target;
     },
 
     SET_ASSESTS_PATH(state, path) {
@@ -55076,119 +59597,16 @@ const store = new vuex_esm.Store({
       state.apiClient = apiClient;
     },
 
-    SET_SCHEME_MODIFIED(state, isModified) {
-      state.schemeModified = isModified;
+    TOGGLE_AUTO_REMOUNT(state) {
+      state.autoRemount = !state.autoRemount;
     },
 
-    SET_AUTO_REMOUNT(state, autoRemount) {
-      state.autoRemount = autoRemount;
-    },
-
-    SET_SHOW_PIVOT(state, show) {
-      state.showPivot = show;
+    TOGGLE_PIVOT(state) {
+      state.showPivot = !state.showPivot;
     },
 
     SET_SHOW_CLICKABLE_MARKERS(state, show) {
       state.showClickableMarkers = show;
-    },
-
-    /* Curve Editing */
-    SET_CURVE_EDIT_ITEM(state, {
-      item,
-      paths
-    }) {
-      state.curveEditing.item = item;
-      state.curveEditing.paths.length = 0;
-
-      if (item) {
-        const pointConverter = createCurvePointConverter(item);
-        paths.forEach((path, pathId) => {
-          state.curveEditing.paths[pathId] = {
-            id: path.id,
-            points: path.points.map(pointConverter)
-          };
-        });
-      }
-    },
-
-    UPDATE_CURVE_EDIT_POINT(state, {
-      item,
-      pathId,
-      pointId,
-      point
-    }) {
-      if (!validatePointIds(pathId, pointId, state.curveEditing)) {
-        return;
-      }
-
-      const pointConverter = createCurvePointConverter(item);
-      const convertedPoint = pointConverter((0,StandardCurves/* convertCurvePointToItemScale */.oJ)(point, item.area.w, item.area.h));
-      forEach_default()(convertedPoint, (value, field) => {
-        state.curveEditing.paths[pathId].points[pointId][field] = value;
-        enrichCurvePoint(state.curveEditing.paths[pathId].points[pointId]);
-      });
-    },
-
-    TOGGLE_CURVE_EDIT_POINT_SELECTION(state, {
-      pathId,
-      pointId,
-      inclusive
-    }) {
-      if (!validatePointIds(pathId, pointId, state.curveEditing)) {
-        return;
-      }
-
-      if (inclusive) {
-        state.curveEditing.paths[pathId].points[pointId].selected = !state.curveEditing.paths[pathId].points[pointId].selected;
-        state.curveEditing.firstSelectedPoint = findFirstSelectedCurveEditPoint(state.curveEditing.paths);
-      } else {
-        state.curveEditing.paths.forEach((path, _pathIndex) => {
-          path.points.forEach((point, _pointIndex) => {
-            point.selected = _pathIndex === pathId && _pointIndex === pointId;
-          });
-        });
-        state.curveEditing.firstSelectedPoint = state.curveEditing.paths[pathId].points[pointId];
-      }
-    },
-
-    RESET_CURVE_EDIT_POINT_SELECTION(state) {
-      state.curveEditing.paths.forEach(path => {
-        path.points.forEach(point => {
-          point.selected = false;
-        });
-      });
-      state.curveEditing.firstSelectedPoint = null;
-    },
-
-    SELECT_CURVE_EDIT_POINT(state, {
-      pathId,
-      pointId,
-      inclusive
-    }) {
-      if (!validatePointIds(pathId, pointId, state.curveEditing)) {
-        return;
-      }
-
-      if (inclusive) {
-        state.curveEditing.paths[pathId].points[pointId].selected = true;
-        state.curveEditing.firstSelectedPoint = findFirstSelectedCurveEditPoint(state.curveEditing.paths);
-      } else {
-        state.curveEditing.paths.forEach((path, _pathIndex) => {
-          path.points.forEach((point, _pointIndex) => {
-            point.selected = _pathIndex === pathId && _pointIndex === pointId;
-          });
-        });
-        state.curveEditing.firstSelectedPoint = state.curveEditing.paths[pathId].points[pointId];
-      }
-    },
-
-    /* History */
-    SET_HISTORY_UNDOABLE(state, isUndoable) {
-      state.history.undoable = isUndoable;
-    },
-
-    SET_HISTORY_REDOABLE(state, isRedoable) {
-      state.history.redoable = isRedoable;
     },
 
     SET_DEFAULT_CONNECTOR_SMOOTHING(state, smoothing) {
@@ -55204,10 +59622,6 @@ const store = new vuex_esm.Store({
     SET_ITEM_SNAP(state, enabled) {
       state.snap.items = enabled;
       myStorage.save('snap.items', enabled);
-    },
-
-    SET_EDITOR_STATE_NAME(state, stateName) {
-      state.editorStateName = stateName;
     },
 
     SET_EDITOR_SUB_STATE_NAME(state, stateName) {
@@ -55385,14 +59799,6 @@ const store = new vuex_esm.Store({
       }
     },
 
-    START_ANIMATION_EDITOR(state, framePlayer) {
-      state.animationEditor.currentFramePlayer = framePlayer;
-    },
-
-    SET_ANIMATION_EDITOR_RECORDING(state, isRecording) {
-      state.animationEditor.isRecording = isRecording;
-    },
-
     COPY_ITEM_STYLE(state, item) {
       state.copiedStyleItem = ui_utils/* default.clone */.Z.clone(item);
     },
@@ -55405,8 +59811,6 @@ const store = new vuex_esm.Store({
       changeType,
       color
     }) {
-      console.log('UPDATE_PATCH_DIFF_COLOR', changeType, color);
-
       if (changeType === 'additions') {
         state.patch.settings.additionsColor = color;
       } else if (changeType === 'deletions') {
@@ -55459,6 +59863,18 @@ const store = new vuex_esm.Store({
       commit('SET_ROOT_PATH', path);
     },
 
+    setDocsPath({
+      commit
+    }, path) {
+      commit('SET_DOCS_PATH', path);
+    },
+
+    setDocsLinkTarget({
+      commit
+    }, target) {
+      commit('SET_DOCS_LINK_TARGET', target);
+    },
+
     setAssetsPath({
       commit
     }, path) {
@@ -55469,108 +59885,6 @@ const store = new vuex_esm.Store({
       commit
     }, apiClient) {
       commit('SET_API_CLIENT', apiClient);
-    },
-
-    markSchemeAsModified({
-      commit
-    }) {
-      commit('SET_SCHEME_MODIFIED', true);
-    },
-
-    markSchemeAsUnmodified({
-      commit
-    }) {
-      commit('SET_SCHEME_MODIFIED', false);
-    },
-
-    setCurveEditItem({
-      commit
-    }, item) {
-      const paths = [];
-
-      if (item) {
-        item.shapeProps.paths.forEach((path, pathId) => {
-          const points = [];
-          path.points.forEach((point, pointId) => {
-            const p = (0,StandardCurves/* convertCurvePointToItemScale */.oJ)(point, item.area.w, item.area.h);
-            p.id = pointId;
-            p.selected = false;
-            enrichCurvePoint(p);
-            points.push(p);
-          });
-          paths.push({
-            id: pathId,
-            points
-          });
-        });
-      }
-
-      commit('SET_CURVE_EDIT_ITEM', {
-        item,
-        paths
-      });
-    },
-
-    updateCurveEditPoint({
-      commit
-    }, {
-      item,
-      pathId,
-      pointId,
-      point
-    }) {
-      commit('UPDATE_CURVE_EDIT_POINT', {
-        item,
-        pathId,
-        pointId,
-        point
-      });
-    },
-
-    toggleCurveEditPointSelection({
-      commit
-    }, {
-      pathId,
-      pointId,
-      inclusive
-    }) {
-      commit('TOGGLE_CURVE_EDIT_POINT_SELECTION', {
-        pathId,
-        pointId,
-        inclusive
-      });
-    },
-
-    resetCurveEditPointSelection({
-      commit
-    }) {
-      commit('RESET_CURVE_EDIT_POINT_SELECTION');
-    },
-
-    selectCurveEditPoint({
-      commit
-    }, {
-      pathId,
-      pointId,
-      inclusive
-    }) {
-      commit('SELECT_CURVE_EDIT_POINT', {
-        pathId,
-        pointId,
-        inclusive
-      });
-    },
-
-    setHistoryUndoable({
-      commit
-    }, isUndoable) {
-      commit('SET_HISTORY_UNDOABLE', isUndoable);
-    },
-
-    setHistoryRedoable({
-      commit
-    }, isRedoable) {
-      commit('SET_HISTORY_REDOABLE', isRedoable);
     },
 
     setDefaultConnectorSmoothing({
@@ -55589,12 +59903,6 @@ const store = new vuex_esm.Store({
       commit
     }, enabled) {
       commit('SET_ITEM_SNAP', enabled);
-    },
-
-    setEditorStateName({
-      commit
-    }, stateName) {
-      commit('SET_EDITOR_STATE_NAME', stateName);
     },
 
     setEditorSubStateName({
@@ -55652,16 +59960,16 @@ const store = new vuex_esm.Store({
       commit('CLEAR_ITEM_SNAPPERS');
     },
 
-    setAutoRemount({
+    toggleAutoRemount({
       commit
-    }, autoRemount) {
-      commit('SET_AUTO_REMOUNT', autoRemount);
+    }) {
+      commit('TOGGLE_AUTO_REMOUNT');
     },
 
-    setShowPivot({
+    togglePivot({
       commit
-    }, show) {
-      commit('SET_SHOW_PIVOT', show);
+    }) {
+      commit('TOGGLE_PIVOT');
     },
 
     setShowClickableMarkers({
@@ -55742,18 +60050,6 @@ const store = new vuex_esm.Store({
       commit('UPDATE_DRAW_EPSILON', epsilon);
     },
 
-    startAnimationEditor({
-      commit
-    }, framePlayer) {
-      commit('START_ANIMATION_EDITOR', framePlayer);
-    },
-
-    setAnimationEditorRecording({
-      commit
-    }, isRecording) {
-      commit('SET_ANIMATION_EDITOR_RECORDING', isRecording);
-    },
-
     copyItemStyle({
       commit
     }, item) {
@@ -55813,10 +60109,7 @@ const store = new vuex_esm.Store({
   },
   getters: {
     apiClient: state => state.apiClient,
-    schemeModified: state => state.schemeModified,
     itemControlPointsList: state => state.itemControlPoints,
-    curveEditPaths: state => state.curveEditing.paths,
-    firstSelectedCurveEditPoint: state => state.curveEditing.firstSelectedPoint,
     multiSelectBox: state => state.multiSelectBox,
     horizontalSnapper: state => state.snappers.horizontal,
     verticalSnapper: state => state.snappers.vertical,
@@ -55830,10 +60123,7 @@ const store = new vuex_esm.Store({
     selectedConnectorPath: state => state.selectedConnectorPath,
     systemMessages: state => state.systemMessages,
     drawEpsilon: state => state.draw.epsilon,
-    editorStateName: state => state.editorStateName,
     editorSubStateName: state => state.editorSubStateName,
-    animationEditorCurrentFramePlayer: state => state.animationEditor.currentFramePlayer,
-    animationEditorIsRecording: state => state.animationEditor.isRecording,
     patchAdditionsColor: state => state.patch.settings.additionsColor,
     patchDeletionsColor: state => state.patch.settings.deletionsColor,
     patchModificationsColor: state => state.patch.settings.modificationsColor,
@@ -55846,6 +60136,8 @@ const store = new vuex_esm.Store({
       return false;
     },
     rootPath: state => state.rootPath,
+    docsPath: state => state.docsPath,
+    docsLinkTarget: state => state.docsLinkTarget,
     assetsPath: state => state.assetsPath
   }
 });
@@ -55886,8 +60178,8 @@ class UserEventBus {
   }
   /**
    * Emits event that originated for a specific item
-   * @param {string} itemId 
-   * @param {string} eventName 
+   * @param {string} itemId
+   * @param {string} eventName
    */
 
 
@@ -55907,14 +60199,136 @@ class UserEventBus {
     this.revision = shortid_default().generate();
   }
 
+  clearEventsForItem(itemId) {
+    if (this.itemEventSubscribers.hasOwnProperty(itemId)) {
+      delete this.itemEventSubscribers[itemId];
+    }
+  }
+
   isActionAllowed(revision) {
     return this.revision === revision;
   }
 
 }
 ;
-// EXTERNAL MODULE: ./src/ui/events.js
-var events = __webpack_require__(8442);
+// EXTERNAL MODULE: ./node_modules/lodash/findKey.js
+var findKey = __webpack_require__(894);
+var findKey_default = /*#__PURE__*/__webpack_require__.n(findKey);
+;// CONCATENATED MODULE: ./src/ui/events.js
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+
+const events_Keys = {
+  ESCAPE: 'escape',
+  DELETE: 'delete',
+  CTRL_A: 'ctrl-a',
+  CTRL_C: 'ctrl-c',
+  CTRL_V: 'ctrl-v',
+  CTRL_S: 'ctrl-s',
+  CTRL_X: 'ctrl-x',
+  CTRL_Z: 'ctrl-z',
+  CTRL_ZERO: 'ctrl-0',
+  CTRL_SHIFT_Z: 'ctrl-shift-z',
+  UP: 'arrow-up',
+  DOWN: 'arrow-down',
+  LEFT: 'arrow-left',
+  RIGHT: 'arrow-right',
+  SPACE: 'space',
+  MINUS: 'minus',
+  EQUALS: 'equals'
+};
+const keyMap = {};
+
+keyMap[events_Keys.ESCAPE] = event => event.key === 'Escape' || event.key === 'Esc' || event.keyCode === 27;
+
+keyMap[events_Keys.DELETE] = event => event.key === 'Backspace' || event.key === 'Delete' || event.keyCode === 8 || event.keyCode === 127;
+
+keyMap[events_Keys.CTRL_X] = event => event.key === 'x' && (event.metaKey || event.ctrlKey);
+
+keyMap[events_Keys.CTRL_A] = event => event.key === 'a' && (event.metaKey || event.ctrlKey);
+
+keyMap[events_Keys.CTRL_C] = event => event.key === 'c' && (event.metaKey || event.ctrlKey);
+
+keyMap[events_Keys.CTRL_V] = event => event.key === 'v' && (event.metaKey || event.ctrlKey);
+
+keyMap[events_Keys.CTRL_S] = event => event.key === 's' && (event.metaKey || event.ctrlKey);
+
+keyMap[events_Keys.CTRL_Z] = event => event.key === 'z' && (event.metaKey || event.ctrlKey) && !event.shiftKey;
+
+keyMap[events_Keys.CTRL_ZERO] = event => event.keyCode === 48 && (event.metaKey || event.ctrlKey) && !event.shiftKey;
+
+keyMap[events_Keys.CTRL_SHIFT_Z] = event => event.key === 'z' && (event.metaKey || event.ctrlKey) && event.shiftKey;
+
+keyMap[events_Keys.LEFT] = event => event.key === 'ArrowLeft';
+
+keyMap[events_Keys.RIGHT] = event => event.key === 'ArrowRight';
+
+keyMap[events_Keys.UP] = event => event.key === 'ArrowUp';
+
+keyMap[events_Keys.DOWN] = event => event.key === 'ArrowDown';
+
+keyMap[events_Keys.SPACE] = event => event.key === ' ' || event.keyCode === 32;
+
+keyMap[events_Keys.MINUS] = event => event.key === '-' || event.keyCode === 189;
+
+keyMap[events_Keys.EQUALS] = event => event.key === '=' || event.keyCode === 187;
+/**
+ *
+ * @param {MouseEvent} event
+ * @returns {String} id of event which is available in Keys object
+ */
+
+
+function identifyKeyPress(event) {
+  return findKey_default()(keyMap, (check, keyName) => check(event));
+}
+const keyEventBus = new (vue_default())({});
+function registerKeyPressHandler(callback) {
+  keyEventBus.$on('key-press', callback);
+}
+function deregisterKeyPressHandler(callback) {
+  keyEventBus.$off('key-press', callback);
+}
+let lastKeyPressed = null;
+
+function handleKeyPress(event, isDown) {
+  event = event || window.event;
+
+  if (event.target !== document.body) {
+    return;
+  }
+
+  const key = identifyKeyPress(event);
+
+  if (key) {
+    if (!isDown) {
+      lastKeyPressed = null;
+    } else {
+      // only arrow keys should be allowed to continuously invoke key press event
+      if (lastKeyPressed === key && !key.startsWith('arrow-')) {
+        return;
+      }
+
+      lastKeyPressed = key;
+    }
+
+    keyEventBus.$emit('key-press', isDown, key, {
+      ctrlCmdPressed: event.metaKey || event.ctrlKey
+    });
+  }
+}
+
+function simulateKeyPress(key, isControlPressed) {
+  if (document.activeElement === document.body) {
+    keyEventBus.$emit('key-press', true, key, {
+      ctrlCmdPressed: isControlPressed
+    });
+  }
+}
+document.addEventListener('keydown', event => handleKeyPress(event, true));
+document.addEventListener('keyup', event => handleKeyPress(event, false));
 ;// CONCATENATED MODULE: ./src/ui/components/editor/states/State.js
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -55924,11 +60338,12 @@ var events = __webpack_require__(8442);
 
 
 
-
 const SUB_STATE_STACK_LIMIT = 10;
+const zoomOptions = [0.1, 0.25, 0.35, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 5, 7.5, 10];
+const MAX_TRACK_MOUSE_POSITIONS = 5;
 /**
  * Checkes whether keys like shift, meta (mac), ctrl were pressed during the mouse event
- * @param {MouseEvent} event 
+ * @param {MouseEvent} event
  */
 
 function isMultiSelectKey(event) {
@@ -55943,16 +60358,142 @@ function isEventRightClick(event) {
 
 class State {
   /**
-   * @param {EventBus} EventBus 
    * @param {Vuex.Store} store - a Vuex store object
    */
-  constructor(eventBus, store, name) {
+  constructor(editorId, store, name, listener) {
     this.schemeContainer = null;
-    this.eventBus = eventBus;
     this.name = name || '';
     this.store = store;
+    this.editorId = editorId;
     this.subState = null;
     this.previousSubStates = [];
+    this.listener = listener; // used to track the beginning of new pinch to zoom event
+
+    this.pinchToZoomId = 0;
+    this.pinchToZoom = {
+      id: 0,
+      wp1: {
+        x: 0,
+        y: 0
+      },
+      wp2: {
+        x: 0,
+        y: 0
+      },
+      x0: 0,
+      y0: 0,
+      scale: 1
+    };
+    this.inertiaDrag = {
+      on: false,
+      speed: 0,
+      direction: {
+        x: 0,
+        y: 0
+      },
+      positionTracker: {
+        idx: 0,
+        positions: []
+      }
+    };
+  }
+
+  resetInertiaDrag() {
+    this.inertiaDrag.positionTracker.idx = 0;
+    this.inertiaDrag.positionTracker.positions = [];
+    this.inertiaDrag.speed = 0;
+    this.inertiaDrag.on = false;
+  }
+
+  registerInertiaPositions(x, y) {
+    if (this.inertiaDrag.positionTracker.positions.length < MAX_TRACK_MOUSE_POSITIONS) {
+      this.inertiaDrag.positionTracker.positions.push({
+        x,
+        y,
+        time: performance.now()
+      });
+    } else {
+      this.inertiaDrag.positionTracker.positions[this.inertiaDrag.positionTracker.idx] = {
+        x,
+        y,
+        time: performance.now()
+      };
+    }
+
+    this.inertiaDrag.positionTracker.idx = (this.inertiaDrag.positionTracker.idx + 1) % MAX_TRACK_MOUSE_POSITIONS;
+  }
+
+  initScreenInertia() {
+    if (this.inertiaDrag.on) {
+      return;
+    }
+
+    const positions = this.inertiaDrag.positionTracker.positions;
+
+    if (positions.length > 2) {
+      positions.sort((a, b) => {
+        return b.time - a.time;
+      });
+      let nx = 0,
+          ny = 0;
+      let speed = 0;
+      const movingWeights = [1.0, 0.5, 0.3, 0.1, 0.05];
+      let totalWeights = 0;
+
+      for (let i = 0; i < positions.length - 1; i++) {
+        const p2 = positions[i + 1];
+        const p1 = positions[i];
+        const d = Math.sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y));
+
+        if (d > 0.01) {
+          nx += (p1.x - p2.x) / d;
+          ny += (p1.y - p2.y) / d;
+        }
+
+        const timeDelta = p1.time - p2.time;
+
+        if (timeDelta > 0.01) {
+          const currentSpeed = d / timeDelta;
+
+          if (i === 0 && currentSpeed < 0.5) {
+            this.inertiaDrag.speed = 0;
+            return;
+          }
+
+          speed += currentSpeed * movingWeights[i];
+          totalWeights += movingWeights[i];
+        }
+      }
+
+      nx = nx / (positions.length - 1);
+      ny = ny / (positions.length - 1);
+      this.inertiaDrag.direction.x = nx;
+      this.inertiaDrag.direction.y = ny;
+
+      if (totalWeights > 0) {
+        this.inertiaDrag.speed = Math.min(10, speed / totalWeights);
+        this.inertiaDrag.on = true;
+      } else {
+        this.inertiaDrag.speed = 0;
+        this.inertiaDrag.on = false;
+      }
+    } else {
+      this.inertiaDrag.speed = 0;
+      this.inertiaDrag.on = false;
+    }
+  }
+
+  loop(deltaTime) {
+    if (this.inertiaDrag.on) {
+      if (this.inertiaDrag.speed > 0.05) {
+        const sx = this.schemeContainer.screenTransform.x + this.inertiaDrag.speed * deltaTime * this.inertiaDrag.direction.x / 2;
+        const sy = this.schemeContainer.screenTransform.y + this.inertiaDrag.speed * deltaTime * this.inertiaDrag.direction.y / 2;
+        this.dragScreenTo(sx, sy);
+        this.inertiaDrag.speed = Math.max(0, this.inertiaDrag.speed - deltaTime / 200);
+      } else {
+        this.inertiaDrag.on = false;
+      }
+    }
   }
 
   migrateSubState(newSubState) {
@@ -55965,13 +60506,17 @@ class State {
     }
 
     this.subState = newSubState;
+    this.subState.listener = this.listener;
     this.store.dispatch('setEditorSubStateName', this.subState ? this.subState.name : 'null');
+    this.listener.onSubStateMigrated();
   }
 
   migrateToPreviousSubState() {
     if (this.previousSubStates.length > 0) {
       this.subState = this.previousSubStates.pop();
+      this.subState.listener = this.listener;
       this.store.dispatch('setEditorSubStateName', this.subState ? this.subState.name : 'null');
+      this.listener.onSubStateMigrated();
     }
   }
 
@@ -55988,7 +60533,7 @@ class State {
 
   cancel() {
     this.reset();
-    this.eventBus.$emit(this.eventBus.CANCEL_CURRENT_STATE, this.name);
+    this.listener.onCancel(this.name);
   }
 
   keyPressed(key, keyOptions) {
@@ -56004,6 +60549,7 @@ class State {
   }
 
   mouseDown(x, y, mx, my, object, event) {
+    this.pinchToZoomId += 1;
     if (this.subState) this.subState.mouseDown(x, y, mx, my, object, event);
   }
 
@@ -56014,13 +60560,83 @@ class State {
   mouseUp(x, y, mx, my, object, event) {
     if (this.subState) this.subState.mouseUp(x, y, mx, my, object, event);
   }
+
+  mobilePinchToZoom(event) {
+    event.preventDefault();
+
+    if (this.pinchToZoom.id !== this.pinchToZoomId) {
+      this.initPinchToZoom(event);
+      return;
+    }
+
+    if (event.touches.length !== 2) {
+      return;
+    }
+
+    const wp1 = this.pinchToZoom.wp1;
+    const wp2 = this.pinchToZoom.wp2;
+    const P1 = {
+      x: event.touches[0].pageX,
+      y: event.touches[0].pageY
+    };
+    const P2 = {
+      x: event.touches[1].pageX,
+      y: event.touches[1].pageY
+    };
+    const denomX = wp1.x - wp2.x;
+    const denomY = wp1.y - wp2.y;
+
+    if (Math.abs(denomX) > Math.abs(denomY)) {
+      if (myMath/* default.tooSmall */.Z.tooSmall(denomX)) {
+        return;
+      }
+
+      this.schemeContainer.screenTransform.scale = myMath/* default.clamp */.Z.clamp(Math.abs((P1.x - P2.x) / denomX), 0.0005, 100000.0);
+    } else {
+      if (myMath/* default.tooSmall */.Z.tooSmall(denomY)) {
+        return;
+      }
+
+      this.schemeContainer.screenTransform.scale = myMath/* default.clamp */.Z.clamp(Math.abs((P1.y - P2.y) / denomY), 0.0005, 100000.0);
+    }
+
+    const xa = P1.x - wp1.x * this.schemeContainer.screenTransform.scale;
+    const xb = P2.x - wp2.x * this.schemeContainer.screenTransform.scale;
+    const ya = P1.y - wp1.y * this.schemeContainer.screenTransform.scale;
+    const yb = P2.y - wp2.y * this.schemeContainer.screenTransform.scale;
+    this.schemeContainer.screenTransform.x = (xa + xb) / 2;
+    this.schemeContainer.screenTransform.y = (ya + yb) / 2;
+    this.listener.onScreenTransformUpdated(this.schemeContainer.screenTransform);
+  }
+
+  initPinchToZoom(event) {
+    if (event.touches.length !== 2) {
+      return;
+    }
+
+    const x0 = this.schemeContainer.screenTransform.x;
+    const y0 = this.schemeContainer.screenTransform.y;
+    const s = this.schemeContainer.screenTransform.scale;
+    this.pinchToZoom.id = this.pinchToZoomId;
+    this.pinchToZoom.wp1 = {
+      x: (event.touches[0].pageX - x0) / s,
+      y: (event.touches[0].pageY - y0) / s
+    };
+    this.pinchToZoom.wp2 = {
+      x: (event.touches[1].pageX - x0) / s,
+      y: (event.touches[1].pageY - y0) / s
+    };
+    this.pinchToZoom.scale = this.schemeContainer.screenTransform.scale;
+    this.pinchToZoom.x0 = this.schemeContainer.screenTransform.x;
+    this.pinchToZoom.y0 = this.schemeContainer.screenTransform.y;
+  }
   /**
-   * 
-   * @param {*} x 
-   * @param {*} y 
-   * @param {*} mx 
-   * @param {*} my 
-   * @param {MouseEvent} event 
+   *
+   * @param {*} x
+   * @param {*} y
+   * @param {*} mx
+   * @param {*} my
+   * @param {MouseEvent} event
    */
 
 
@@ -56060,12 +60676,47 @@ class State {
     }
   }
 
-  zoomOutByKey() {
-    this.changeZoomTo(this.schemeContainer.screenTransform.scale * 0.9);
+  resetZoom() {
+    this.changeZoomTo(1);
   }
 
-  zoomInByKey() {
-    this.changeZoomTo(this.schemeContainer.screenTransform.scale * 1.1);
+  zoomOut() {
+    const currentZoom = this.schemeContainer.screenTransform.scale;
+    let selectedZoom = zoomOptions[0];
+    let found = false;
+
+    for (let i = 0; i < zoomOptions.length && !found; i++) {
+      if (zoomOptions[i] < currentZoom) {
+        selectedZoom = zoomOptions[i];
+      } else {
+        found = true;
+      }
+    }
+
+    this.changeZoomTo(selectedZoom);
+  }
+
+  zoomIn() {
+    const currentZoom = this.schemeContainer.screenTransform.scale;
+    let selectedZoom = zoomOptions[zoomOptions.length - 1];
+    let found = false;
+    let i = zoomOptions.length - 1;
+
+    while (!found) {
+      if (zoomOptions[i] > currentZoom) {
+        selectedZoom = zoomOptions[i];
+      } else {
+        found = true;
+      }
+
+      i = i - 1;
+
+      if (i < 0) {
+        found = true;
+      }
+    }
+
+    this.changeZoomTo(selectedZoom);
   }
 
   changeZoomTo(newScale) {
@@ -56073,7 +60724,7 @@ class State {
     let schemeContainer = this.schemeContainer;
     const xo = schemeContainer.screenTransform.x;
     const yo = schemeContainer.screenTransform.y;
-    const svgRect = document.getElementById('svg_plot').getBoundingClientRect();
+    const svgRect = document.getElementById(`svg-plot-${this.schemeContainer.editorId}`).getBoundingClientRect();
     const cx = svgRect.width / 2;
     const cy = svgRect.height / 2;
     const sx = cx - newScale * (cx - xo) / schemeContainer.screenTransform.scale;
@@ -56081,7 +60732,7 @@ class State {
     schemeContainer.screenTransform.scale = newScale;
     schemeContainer.screenTransform.x = sx;
     schemeContainer.screenTransform.y = sy;
-    EventBus/* default.$emit */.Z.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, schemeContainer.screenTransform);
+    this.listener.onScreenTransformUpdated(this.schemeContainer.screenTransform);
   }
 
   dragScreenOffset(dx, dy) {
@@ -56091,8 +60742,8 @@ class State {
   }
   /**
    * Changes screen offset coords and checks bounding box of all items in relative transform so that they are always visible on the screen
-   * @param {*} sx 
-   * @param {*} sy 
+   * @param {*} sx
+   * @param {*} sy
    */
 
 
@@ -56114,7 +60765,7 @@ class State {
       this.schemeContainer.screenTransform.y = sy;
     }
 
-    this.eventBus.$emit(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, this.schemeContainer.screenTransform);
+    this.listener.onScreenTransformUpdated(this.schemeContainer.screenTransform);
   }
 
   isSnappingToItemsEnabled() {
@@ -56132,7 +60783,7 @@ class State {
   }
   /**
    * Checks snapping of item and returns new offset that should be applied to item
-   * 
+   *
    * @param {SnappingPoints} points - points of an item by which it should snap it to other items
    * @param {Set} excludeItemIds - items that should be excluded from snapping (so that they don't snap to themselve)
    * @param {Number} dx - pre-snap candidate offset on x axis
@@ -56193,7 +60844,7 @@ class State {
     }
 
     if (horizontalSnapper) {
-      store_StoreUtils.setItemSnapper(this.store, horizontalSnapper.snapper);
+      store_StoreUtils/* default.setItemSnapper */.Z.setItemSnapper(this.store, horizontalSnapper.snapper);
       snappedDy = horizontalSnapper.dy;
     } else if (this.store.state.snap.grid) {
       //snap to grid
@@ -56210,7 +60861,7 @@ class State {
     }
 
     if (verticalSnapper) {
-      store_StoreUtils.setItemSnapper(this.store, verticalSnapper.snapper);
+      store_StoreUtils/* default.setItemSnapper */.Z.setItemSnapper(this.store, verticalSnapper.snapper);
       snappedDx = verticalSnapper.dx;
     } else if (this.store.state.snap.grid) {
       //snap to grid
@@ -56234,7 +60885,7 @@ class State {
   /**
    * Based on zoom it calculates a precision with which we should round the updated value
    * This is needed to avoid issues with floating values calculation so that users don't get uggly values with many digits after point.
-   * 
+   *
    * @returns precision for which we should round the value
    */
 
@@ -56257,7 +60908,7 @@ class State {
 
 class SubState extends (/* unused pure expression or super */ null && (State)) {
   constructor(parentState, name) {
-    super(parentState.eventBus, parentState.store, name);
+    super(parentState.editorId, parentState.store, name);
     this.schemeContainer = parentState.schemeContainer;
     this.parentState = parentState;
   }
@@ -56284,14 +60935,16 @@ class SubState extends (/* unused pure expression or super */ null && (State)) {
 
 }
 class DragScreenState extends (/* unused pure expression or super */ null && (SubState)) {
-  constructor(parentState, originalClickPoint) {
+  constructor(parentState, exitOnMouseUp, originalClickPoint) {
     super(parentState, 'drag-screen');
     this.schemeContainer = parentState.schemeContainer;
     this.originalClickPoint = originalClickPoint;
+    this.exitOnMouseUp = exitOnMouseUp;
     this.originalScreenOffset = {
       x: this.schemeContainer.screenTransform.x,
       y: this.schemeContainer.screenTransform.y
     };
+    this.parentState.resetInertiaDrag();
   }
 
   keyUp(key, keyOptions) {
@@ -56311,23 +60964,30 @@ class DragScreenState extends (/* unused pure expression or super */ null && (Su
       x: this.schemeContainer.screenTransform.x,
       y: this.schemeContainer.screenTransform.y
     };
+    this.parentState.resetInertiaDrag();
   }
 
   mouseMove(x, y, mx, my, object, event) {
-    if (event.buttons === 0) {
-      this.mouseUp(x, y, mx, my, object, event);
-      return;
-    }
-
     if (this.originalClickPoint) {
+      if (event.buttons === 0) {
+        this.mouseUp(x, y, mx, my, object, event);
+        return;
+      }
+
+      this.parentState.registerInertiaPositions(mx, my);
       this.schemeContainer.screenTransform.x = Math.floor(this.originalScreenOffset.x + mx - this.originalClickPoint.mx);
       this.schemeContainer.screenTransform.y = Math.floor(this.originalScreenOffset.y + my - this.originalClickPoint.my);
     }
   }
 
   mouseUp(x, y, mx, my, object, event) {
-    this.eventBus.$emit(this.eventBus.SCREEN_TRANSFORM_UPDATED);
-    this.migrateToPreviousSubState();
+    this.originalClickPoint = null;
+    this.parentState.initScreenInertia();
+    this.listener.onScreenTransformUpdated(this.schemeContainer.screenTransform);
+
+    if (this.exitOnMouseUp) {
+      this.migrateToPreviousSubState();
+    }
   }
 
 }
@@ -56396,6 +61056,7 @@ class MultiSelectState extends (/* unused pure expression or super */ null && (S
 
 
 
+
 const MOUSE_IN = Events/* default.standardEvents.mousein.id */.Z.standardEvents.mousein.id;
 const MOUSE_OUT = Events/* default.standardEvents.mouseout.id */.Z.standardEvents.mouseout.id;
 const CLICKED = Events/* default.standardEvents.clicked.id */.Z.standardEvents.clicked.id;
@@ -56405,13 +61066,11 @@ This state works as dragging the screen, zooming, selecting elements
 
 class StateInteract extends states_State {
   /**
-   * 
-   * @param {EventBus} EventBus 
-   * @param {UserEventBus} userEventBus 
+   *
+   * @param {UserEventBus} userEventBus
    */
-  constructor(eventBus, store, userEventBus) {
-    super(eventBus, store);
-    this.name = 'interact';
+  constructor(editorId, store, userEventBus, listener) {
+    super(editorId, store, 'interact', listener);
     this.startedDragging = false;
     this.initialClickPoint = null;
     this.originalOffset = {
@@ -56436,6 +61095,7 @@ class StateInteract extends states_State {
   }
 
   mouseDown(x, y, mx, my, object, event) {
+    super.mouseDown(x, y, mx, my, object, event);
     this.initScreenDrag(mx, my);
   }
 
@@ -56450,28 +61110,40 @@ class StateInteract extends states_State {
       y: this.schemeContainer.screenTransform.y
     };
     this.originalZoom = this.schemeContainer.screenTransform.scale;
+    this.resetInertiaDrag();
   }
 
   keyPressed(key, keyOptions) {
-    if (key === events/* Keys.MINUS */.R.MINUS) {
-      this.zoomOutByKey();
-    } else if (key === events/* Keys.EQUALS */.R.EQUALS) {
-      this.zoomInByKey();
+    if (key === events_Keys.MINUS) {
+      this.zoomOut();
+    } else if (key === events_Keys.EQUALS) {
+      this.zoomIn();
+    } else if (key === events_Keys.CTRL_ZERO) {
+      this.resetZoom();
     }
   }
 
   mouseUp(x, y, mx, my, object, event) {
     if (this.startedDragging && this.initialClickPoint) {
+      this.initScreenInertia();
+
       if (Math.abs(mx - this.initialClickPoint.x) + Math.abs(my - this.initialClickPoint.y) < 3) {
         if (object && object.item) {
-          this.eventBus.$emit(EventBus/* default.ANY_ITEM_CLICKED */.Z.ANY_ITEM_CLICKED, object.item);
+          this.listener.onItemClicked(object.item, x, y);
+          const shape = Shape/* default.find */.Z.find(object.item.shape);
+
+          if (shape && shape.onMouseDown) {
+            const localPoint = (0,SchemeContainer/* localPointOnItem */.N5)(x, y, object.item);
+            shape.onMouseDown(this.editorId, object.item, object.areaId, localPoint.x, localPoint.y);
+          }
+
           this.emit(object.item, CLICKED);
           this.handleItemClick(object.item, mx, my);
         } else {
           // checking whether user clicked on the item link or not
           // if it was item link - then we don't want to remove them from DOM
           if (!event.target || !event.target.closest('.item-link')) {
-            this.eventBus.$emit(EventBus/* default.VOID_CLICKED */.Z.VOID_CLICKED);
+            this.listener.onVoidClicked();
           }
         }
       }
@@ -56481,6 +61153,11 @@ class StateInteract extends states_State {
   }
 
   mouseMove(x, y, mx, my, object, event) {
+    if (event.touches && event.touches.length === 2) {
+      this.mobilePinchToZoom(event);
+      return;
+    }
+
     if (this.startedDragging && this.initialClickPoint) {
       event.preventDefault();
 
@@ -56491,20 +61168,29 @@ class StateInteract extends states_State {
         this.dragScreen(mx, my);
       }
     } else {
+      if (object.item) {
+        const shape = Shape/* default.find */.Z.find(object.item.shape);
+
+        if (shape && shape.onMouseMove) {
+          const localPoint = (0,SchemeContainer/* localPointOnItem */.N5)(x, y, object.item);
+          shape.onMouseMove(this.editorId, object.item, object.areaId, localPoint.x, localPoint.y);
+        }
+      }
+
       this.handleItemHoverEvents(object);
     }
   }
 
   handleItemClick(item, mx, my) {
     if (item.links && item.links.length > 0) {
-      this.eventBus.$emit(EventBus/* default.ITEM_LINKS_SHOW_REQUESTED */.Z.ITEM_LINKS_SHOW_REQUESTED, item);
+      this.listener.onItemLinksShowRequested(item);
     }
 
     if ((0,Item/* hasItemDescription */.U3)(item)) {
       if (item.interactionMode === Item/* ItemInteractionMode.SIDE_PANEL */.pp.SIDE_PANEL) {
-        this.eventBus.$emit(EventBus/* default.ITEM_SIDE_PANEL_TRIGGERED */.Z.ITEM_SIDE_PANEL_TRIGGERED, item);
+        this.listener.onItemSidePanelRequested(item);
       } else if (item.interactionMode === Item/* ItemInteractionMode.TOOLTIP */.pp.TOOLTIP) {
-        this.eventBus.$emit(EventBus/* default.ITEM_TOOLTIP_TRIGGERED */.Z.ITEM_TOOLTIP_TRIGGERED, item, mx, my);
+        this.listener.onItemTooltipRequested(item, mx, my);
       }
     }
   }
@@ -56518,7 +61204,7 @@ class StateInteract extends states_State {
   }
 
   handleItemHoverEvents(object) {
-    if (object && object.type === 'item' && object.item) {
+    if (object && (object.type === 'item' || object.type === 'custom-item-area') && object.item) {
       if (!this.currentHoveredItem) {
         if (object.item.meta && Array.isArray(object.item.meta.ancestorIds)) {
           this.hoveredItemIds = new Set(object.item.meta.ancestorIds.concat([object.item.id]));
@@ -56542,7 +61228,7 @@ class StateInteract extends states_State {
         this.hoveredItemIds.forEach(itemId => {
           if (!allNewIds.has(itemId)) {
             this.hoveredItemIds.delete(itemId);
-            this.sendItemEventById(itemId, MOUSE_OUT);
+            this.sendMouseOutEvent(itemId);
           }
         });
         allNewIds.forEach(itemId => {
@@ -56555,11 +61241,28 @@ class StateInteract extends states_State {
       }
     } else {
       this.hoveredItemIds.forEach(itemId => {
-        this.sendItemEventById(itemId, MOUSE_OUT);
+        this.sendMouseOutEvent(itemId);
       });
       this.hoveredItemIds.clear();
       this.currentHoveredItem = null;
     }
+  }
+
+  sendMouseOutEvent(itemId) {
+    this.sendItemEventById(itemId, MOUSE_OUT);
+    const item = this.schemeContainer.findItemById(itemId);
+
+    if (!item) {
+      return;
+    }
+
+    const shape = Shape/* default.find */.Z.find(item.shape);
+
+    if (!shape || !shape.onMouseOut) {
+      return;
+    }
+
+    shape.onMouseOut(this.editorId, item);
   }
 
   emit(element, eventName) {
@@ -56569,6 +61272,8 @@ class StateInteract extends states_State {
   }
 
   dragScreen(x, y) {
+    this.registerInertiaPositions(x, y);
+
     if (!this.schemeContainer.scheme.settings.screen.draggable) {
       return;
     }
@@ -56588,7 +61293,6 @@ function ExtraShapes_ownKeys(object, enumerableOnly) { var keys = Object.keys(ob
 function ExtraShapes_objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; if (i % 2) { ExtraShapes_ownKeys(Object(source), true).forEach(function (key) { ExtraShapes_defineProperty(target, key, source[key]); }); } else if (Object.getOwnPropertyDescriptors) { Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)); } else { ExtraShapes_ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } } return target; }
 
 function ExtraShapes_defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-
 
 
 
@@ -56616,22 +61320,16 @@ function registerExternalShapeGroup($store, shapeGroupId, shapeGroup) {
       });
     }
   });
-  store_StoreUtils.registerShapeGroupId($store, shapeGroupId);
+  store_StoreUtils/* default.registerShapeGroupId */.Z.registerShapeGroupId($store, shapeGroupId);
 }
 
 function collectMissingShapes(items) {
   const missingShapes = new Set();
-
-  if (Array.isArray(items)) {
-    items.forEach(rootItem => {
-      (0,Item/* traverseItems */.Hp)(rootItem, item => {
-        if (item.shape && !Shape/* default.find */.Z.find(item.shape)) {
-          missingShapes.add(item.shape);
-        }
-      });
-    });
-  }
-
+  (0,Item/* traverseItems */.Hp)(items, item => {
+    if (item.shape && !Shape/* default.find */.Z.find(item.shape)) {
+      missingShapes.add(item.shape);
+    }
+  });
   return Array.from(missingShapes);
 }
 
@@ -56671,7 +61369,6 @@ function loadAllMissingShapes(shapeIds, $store) {
 
       return axios_default().get(shapeGroup.ref).then(response => {
         registerExternalShapeGroup($store, shapeGroupId, response.data);
-        EventBus/* default.$emit */.Z.$emit(EventBus/* default.EXTRA_SHAPE_GROUP_REGISTERED */.Z.EXTRA_SHAPE_GROUP_REGISTERED);
       });
     }));
   });
@@ -56732,6 +61429,11 @@ function collectAndLoadAllMissingShapes(items, $store) {
 //
 //
 //
+//
+//
+//
+//
+//
 
 
 
@@ -56742,8 +61444,7 @@ function collectAndLoadAllMissingShapes(items, $store) {
 
 
 
-const userEventBus = new UserEventBus();
-const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_Store, userEventBus);
+
 /* harmony default export */ const StandaloneSchemeViewvue_type_script_lang_js_ = ({
   props: ['scheme', 'offsetX', 'offsetY', 'zoom', 'autoZoom', 'sidePanelWidth', 'useMouseWheel', 'homeLink'],
   components: {
@@ -56755,24 +61456,36 @@ const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_St
   beforeMount() {
     this.$store.dispatch('setAssetsPath', '/');
     this.initSchemeContainer();
-    EventBus/* default.$on */.Z.$on(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, this.onScreenTransformUpdated);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_TOOLTIP_TRIGGERED */.Z.ITEM_TOOLTIP_TRIGGERED, this.onItemTooltipTriggered);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.ITEM_SIDE_PANEL_TRIGGERED */.Z.ITEM_SIDE_PANEL_TRIGGERED, this.onItemSidePanelTriggered);
-    EventBus/* default.$on */.Z.$on(EventBus/* default.VOID_CLICKED */.Z.VOID_CLICKED, this.onVoidClicked);
+    EditorEventBus/* default.screenTransformUpdated.$on */.Z.screenTransformUpdated.$on(this.editorId, this.onScreenTransformUpdated);
+    EditorEventBus/* default.void.clicked.$on */.Z["void"].clicked.$on(this.editorId, this.onVoidClicked);
   },
 
   beforeDestroy() {
-    EventBus/* default.$off */.Z.$off(EventBus/* default.SCREEN_TRANSFORM_UPDATED */.Z.SCREEN_TRANSFORM_UPDATED, this.onScreenTransformUpdated);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_TOOLTIP_TRIGGERED */.Z.ITEM_TOOLTIP_TRIGGERED, this.onItemTooltipTriggered);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.ITEM_SIDE_PANEL_TRIGGERED */.Z.ITEM_SIDE_PANEL_TRIGGERED, this.onItemSidePanelTriggered);
-    EventBus/* default.$off */.Z.$off(EventBus/* default.VOID_CLICKED */.Z.VOID_CLICKED, this.onVoidClicked);
+    EditorEventBus/* default.screenTransformUpdated.$off */.Z.screenTransformUpdated.$off(this.editorId, this.onScreenTransformUpdated);
+    EditorEventBus/* default.void.clicked.$off */.Z["void"].clicked.$off(this.editorId, this.onVoidClicked);
+  },
+
+  created() {
+    this.userEventBus = new UserEventBus();
+    this.stateInteract = new states_StateInteract(store_Store, this.userEventBus, {
+      onCancel: () => {},
+      onItemClicked: item => EditorEventBus/* default.item.clicked.any.$emit */.Z.item.clicked.any.$emit(this.editorId, item),
+      onItemChanged: (itemId, propertyPath) => EditorEventBus/* default.item.changed.specific.$emit */.Z.item.changed.specific.$emit(this.editorId, itemId, propertyPath),
+      onVoidClicked: () => EditorEventBus/* default.void.clicked.$emit */.Z["void"].clicked.$emit(this.editorId),
+      onItemTooltipRequested: (item, mx, my) => this.onItemTooltipTriggered(item, mx, my),
+      onItemSidePanelRequested: item => this.onItemSidePanelTriggered(item),
+      onItemLinksShowRequested: item => EditorEventBus/* default.item.linksShowRequested.any.$emit */.Z.item.linksShowRequested.any.$emit(this.editorId, item),
+      onScreenTransformUpdated: screenTransform => this.onScreenTransformUpdated(screenTransform),
+      onItemsHighlighted: highlightedItems => this.highlightedItems = highlightedItems,
+      onSubStateMigrated: () => {}
+    });
   },
 
   data() {
     return {
+      editorId: 'standalone-' + (shortid_default()).generate,
       schemeContainer: null,
       initialized: false,
-      userEventBus,
       textZoom: "" + this.zoom,
       vZoom: this.zoom,
       itemTooltip: {
@@ -56780,6 +61493,10 @@ const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_St
         shown: false,
         x: 0,
         y: 0
+      },
+      highlightedItems: {
+        itemIds: [],
+        showPins: false
       },
       sidePanel: {
         item: null
@@ -56792,9 +61509,9 @@ const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_St
       collectAndLoadAllMissingShapes(this.scheme.items, this.$store).catch(err => {
         console.error('Failed to load shapes', err);
       }).then(() => {
-        this.schemeContainer = new SchemeContainer/* default */.ZP(this.scheme, EventBus/* default */.Z);
-        stateInteract.schemeContainer = this.schemeContainer;
-        stateInteract.reset();
+        this.schemeContainer = new SchemeContainer/* default */.ZP(this.scheme, this.editorId);
+        this.stateInteract.schemeContainer = this.schemeContainer;
+        this.stateInteract.reset();
         this.initialized = true;
 
         if (this.autoZoom) {
@@ -56805,31 +61522,31 @@ const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_St
 
     mouseWheel(x, y, mx, my, event) {
       if (this.initialized) {
-        stateInteract.mouseWheel(x, y, mx, my, event);
+        this.stateInteract.mouseWheel(x, y, mx, my, event);
       }
     },
 
     mouseDown(worldX, worldY, screenX, screenY, object, event) {
       if (this.initialized) {
-        stateInteract.mouseDown(worldX, worldY, screenX, screenY, object, event);
+        this.stateInteract.mouseDown(worldX, worldY, screenX, screenY, object, event);
       }
     },
 
     mouseUp(worldX, worldY, screenX, screenY, object, event) {
       if (this.initialized) {
-        stateInteract.mouseUp(worldX, worldY, screenX, screenY, object, event);
+        this.stateInteract.mouseUp(worldX, worldY, screenX, screenY, object, event);
       }
     },
 
     mouseMove(worldX, worldY, screenX, screenY, object, event) {
       if (this.initialized) {
-        stateInteract.mouseMove(worldX, worldY, screenX, screenY, object, event);
+        this.stateInteract.mouseMove(worldX, worldY, screenX, screenY, object, event);
       }
     },
 
     mouseDoubleClick(worldX, worldY, screenX, screenY, object, event) {
       if (this.initialized) {
-        stateInteract.mouseDoubleClick(worldX, worldY, screenX, screenY, object, event);
+        this.stateInteract.mouseDoubleClick(worldX, worldY, screenX, screenY, object, event);
       }
     },
 
@@ -56869,7 +61586,7 @@ const stateInteract = new states_StateInteract(EventBus/* default */.Z, store_St
         const area = this.getBoundingBoxOfItems(items);
 
         if (area) {
-          EventBus/* default.emitBringToViewInstantly */.Z.emitBringToViewInstantly(area);
+          EditorEventBus/* default.zoomToAreaRequested.$emit */.Z.zoomToAreaRequested.$emit(this.editorId, area, false);
         }
       }
     },
